@@ -12,10 +12,7 @@
 
 import type { TimerHost } from '../../../src/core/types';
 import type { DiagnosticEvent, DiagnosticsSink } from '../../../src/diagnostics/types';
-import type {
-  NavigationRouteState,
-  NavigationTreeState,
-} from '../../../src/navigation/types';
+import type { NavigationRouteState, NavigationTreeState } from '../../../src/navigation/types';
 
 // ---------------------------------------------------------------------------
 // Fake TimerHost — manual clock; advance() fires all due timers in order.
@@ -87,11 +84,7 @@ export function createRecordingSink(): RecordedSink {
 // ---------------------------------------------------------------------------
 // State-tree fixture builders
 
-export function route(
-  key: string,
-  name = key,
-  state?: NavigationTreeState
-): NavigationRouteState {
+export function route(key: string, name = key, state?: NavigationTreeState): NavigationRouteState {
   return { key, name, ...(state !== undefined ? { state } : {}) };
 }
 

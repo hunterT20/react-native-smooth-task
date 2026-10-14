@@ -166,7 +166,11 @@ export class FakeTaskScheduler implements TaskScheduler {
     liveSchedulers.add(this);
   }
 
-  schedule(scopeId: ScopeId, callback: TaskCallback, options: ScheduleTaskOptions = {}): TaskHandle {
+  schedule(
+    scopeId: ScopeId,
+    callback: TaskCallback,
+    options: ScheduleTaskOptions = {}
+  ): TaskHandle {
     if (options.key !== undefined) {
       // latest-wins dedupe: cancel the pending task with same scope+key
       for (const task of [...this.tasks]) {
@@ -420,8 +424,7 @@ export class FakeNavigationCoordinator implements NavigationCoordinator {
     const path = this.state ? findRoutePath(this.state.routes, routeKey) : null;
     const exists = path !== null;
     const focusedOnPath = exists && pathIsFocused(this.state!, path);
-    const hasPendingTransition =
-      exists && navNodesOnPath(path).some((id) => this.barriers.has(id));
+    const hasPendingTransition = exists && navNodesOnPath(path).some((id) => this.barriers.has(id));
     const settled =
       exists && focusedOnPath && !hasPendingTransition && this._ready && this.appActive;
     return {
@@ -587,9 +590,8 @@ function tryLoadReal<T extends object>(...candidatePaths: string[]): Partial<T> 
 //   jest.mock('../../../src/diagnostics/types', () => require('./fakes').diagnosticsTypesModule());
 
 export function coreTypesModule(): typeof import('../../../src/core/types') {
-  const actual = jest.requireActual<typeof import('../../../src/core/types')>(
-    '../../../src/core/types'
-  );
+  const actual =
+    jest.requireActual<typeof import('../../../src/core/types')>('../../../src/core/types');
   const impl =
     tryLoadReal<typeof import('../../../src/core/types')>(
       '../../../src/core/TaskScheduler',
@@ -610,7 +612,8 @@ export function coreTypesModule(): typeof import('../../../src/core/types') {
   return {
     ...actual,
     createTaskScheduler: impl.createTaskScheduler ?? createFakeTaskScheduler,
-    createDefaultIdleHost: idle.createDefaultIdleHost ?? hosts.createDefaultIdleHost ?? createFakeIdleHost,
+    createDefaultIdleHost:
+      idle.createDefaultIdleHost ?? hosts.createDefaultIdleHost ?? createFakeIdleHost,
     createDefaultTimerHost: hosts.createDefaultTimerHost ?? createRealTimerHost,
     createOpenGate: hosts.createOpenGate ?? impl.createOpenGate ?? createOpenGateFake,
   };

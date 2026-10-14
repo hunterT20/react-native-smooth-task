@@ -13,10 +13,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { NavigationTreeState } from '../navigation/types';
 import { useSmoothTask } from './SmoothTaskContext';
-import type {
-  NavigationContainerObservers,
-  UseSmoothNavigationContainerOptions,
-} from './types';
+import type { NavigationContainerObservers, UseSmoothNavigationContainerOptions } from './types';
 
 /** Shape of the object React Navigation's container ref points at. */
 export interface NavigationContainerRefLike {

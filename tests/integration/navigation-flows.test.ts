@@ -52,9 +52,7 @@ function setup(options?: { maxTasksPerTurn?: number; stallWarningMs?: number }):
     idleHost: idle,
     timerHost: timers,
     diagnostics: sink,
-    ...(options?.maxTasksPerTurn !== undefined
-      ? { maxTasksPerTurn: options.maxTasksPerTurn }
-      : {}),
+    ...(options?.maxTasksPerTurn !== undefined ? { maxTasksPerTurn: options.maxTasksPerTurn } : {}),
   });
   return {
     timers,
@@ -206,7 +204,10 @@ describe('T06–T09 — sequencing and tree changes', () => {
     const h = setup();
     const { order, spy } = calls();
     const rootWith = (routes: string[], index: number) =>
-      nav(routes.map((k) => route(k)), index);
+      nav(
+        routes.map((k) => route(k)),
+        index
+      );
 
     h.coordinator.setNavigationState(rootWith(['a', 'b'], 1));
     h.coordinator.transitionStarted('b');
@@ -360,16 +361,8 @@ describe('T16–T18, T20, T22, T23 — scheduler behavior through the gate', () 
     // Two tabs each containing a stack with a 'Detail' screen.
     const tree = nav(
       [
-        route(
-          'tab-a',
-          'TabA',
-          nav([route('a-list', 'List'), route('a-detail', 'Detail')], 0)
-        ),
-        route(
-          'tab-b',
-          'TabB',
-          nav([route('b-list', 'List'), route('b-detail', 'Detail')], 0)
-        ),
+        route('tab-a', 'TabA', nav([route('a-list', 'List'), route('a-detail', 'Detail')], 0)),
+        route('tab-b', 'TabB', nav([route('b-list', 'List'), route('b-detail', 'Detail')], 0)),
       ],
       0
     );

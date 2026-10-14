@@ -10,8 +10,12 @@
  */
 
 jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () => jest.requireActual('./fakes').navigationTypesModule());
-jest.mock('../../../src/diagnostics/types', () => jest.requireActual('./fakes').diagnosticsTypesModule());
+jest.mock('../../../src/navigation/types', () =>
+  jest.requireActual('./fakes').navigationTypesModule()
+);
+jest.mock('../../../src/diagnostics/types', () =>
+  jest.requireActual('./fakes').diagnosticsTypesModule()
+);
 jest.mock('@react-navigation/native', () => ({
   useRoute: jest.fn(),
 }));
@@ -100,7 +104,10 @@ describe('route-scoped useDeferredMount', () => {
     // Phase 1: sibling focused — 'child' exists but is not on the focus path.
     await act(() =>
       coordinator.setNavigationState(
-        navState([routeState('sibling'), routeState('parent', navState([routeState('child')], 0))], 0)
+        navState(
+          [routeState('sibling'), routeState('parent', navState([routeState('child')], 0))],
+          0
+        )
       )
     );
     // Phase 2: open the barrier on the nested navigator while child is still
@@ -109,7 +116,10 @@ describe('route-scoped useDeferredMount', () => {
     // Phase 3: focus parent+child — the 'parent' navNode barrier blocks child.
     await act(() =>
       coordinator.setNavigationState(
-        navState([routeState('sibling'), routeState('parent', navState([routeState('child')], 0))], 1)
+        navState(
+          [routeState('sibling'), routeState('parent', navState([routeState('child')], 0))],
+          1
+        )
       )
     );
     await pump();
@@ -246,10 +256,9 @@ describe('route-scoped useAfterTransition', () => {
 describe('route-scoped useIdleTask', () => {
   it('holds tasks while the route is not settled, runs when it settles', async () => {
     const cb = jest.fn();
-    const { result } = await renderHook(
-      () => ({ ctx: useCtx(), scheduleIdle: useIdleTask() }),
-      { wrapper }
-    );
+    const { result } = await renderHook(() => ({ ctx: useCtx(), scheduleIdle: useIdleTask() }), {
+      wrapper,
+    });
     const coordinator = result.current.ctx.coordinator;
     await act(() => {
       coordinator.transitionStarted('route-a');

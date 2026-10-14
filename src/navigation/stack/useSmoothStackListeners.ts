@@ -20,8 +20,7 @@ import type { NavigatorRegistration } from '../types';
 import { useSmoothTask } from '../../react/SmoothTaskContext';
 import type { SmoothStackListenersOptions } from '../../react/types';
 
-type EventData<Name extends keyof StackNavigationEventMap> =
-  StackNavigationEventMap[Name]['data'];
+type EventData<Name extends keyof StackNavigationEventMap> = StackNavigationEventMap[Name]['data'];
 
 /** Structural event payload delivered by React Navigation listeners. */
 export interface StackListenerEvent<Name extends keyof StackNavigationEventMap> {

@@ -83,10 +83,7 @@ export class RouteRegistry {
    * `openBarrierNavNodeIds` — navNodeIds that currently hold an open barrier
    * (keeps tombstones resolvable while a transition is in flight).
    */
-  rebuild(
-    state: NavigationTreeState,
-    openBarrierNavNodeIds: ReadonlySet<string>
-  ): RebuildResult {
+  rebuild(state: NavigationTreeState, openBarrierNavNodeIds: ReadonlySet<string>): RebuildResult {
     const routes = new Map<string, IndexedRoute>();
     const members = new Map<string, Set<string>>();
 
@@ -147,10 +144,7 @@ export class RouteRegistry {
     // NavNodes with zero members in the latest state are dead — the
     // coordinator auto-closes their barriers and purges their tombstones.
     const deadNavNodeIds: string[] = [];
-    const candidateNavNodes = new Set<string>([
-      ...this.knownNavNodeIds,
-      ...openBarrierNavNodeIds,
-    ]);
+    const candidateNavNodes = new Set<string>([...this.knownNavNodeIds, ...openBarrierNavNodeIds]);
     for (const navNodeId of candidateNavNodes) {
       if ((members.get(navNodeId)?.size ?? 0) === 0) {
         deadNavNodeIds.push(navNodeId);

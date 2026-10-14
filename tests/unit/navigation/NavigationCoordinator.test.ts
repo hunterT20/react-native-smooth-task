@@ -102,7 +102,10 @@ describe('pop transitions (tombstone resolution)', () => {
     const { coordinator, sink } = setup();
     // Root stack: [tabs, modal] — modal pushed on top.
     coordinator.setNavigationState(
-      nav([route('tabs', 'MainTabs', nav([route('tab-home', 'Home')], 0)), route('modal', 'Modal')], 1)
+      nav(
+        [route('tabs', 'MainTabs', nav([route('tab-home', 'Home')], 0)), route('modal', 'Modal')],
+        1
+      )
     );
     expect(coordinator.getRouteStatus('modal').settled).toBe(true);
 
@@ -236,10 +239,17 @@ describe('reset/replace — navNode purge', () => {
 
     // Reset removes the Orders tab entirely — navNode 'tab-orders' dies.
     coordinator.setNavigationState(
-      nav([
-        route('tabs', 'MainTabs', nav([route('tab-home', 'Home', nav([route('home-feed', 'Feed')], 0))], 0)),
-        route('settings', 'Settings'),
-      ], 0)
+      nav(
+        [
+          route(
+            'tabs',
+            'MainTabs',
+            nav([route('tab-home', 'Home', nav([route('home-feed', 'Feed')], 0))], 0)
+          ),
+          route('settings', 'Settings'),
+        ],
+        0
+      )
     );
 
     // Barrier auto-closed on purge; tombstones for its routes dropped.
@@ -263,7 +273,9 @@ describe('reset/replace — navNode purge', () => {
     expect(coordinator.getRouteStatus('a').hasPendingTransition).toBe(true);
 
     coordinator.setNavigationState({ routes: [] });
-    expect(sink.byCode('barrier-closed').some((e) => e.details?.['closeReason'] === 'navnode-purged')).toBe(true);
+    expect(
+      sink.byCode('barrier-closed').some((e) => e.details?.['closeReason'] === 'navnode-purged')
+    ).toBe(true);
     expect(coordinator.getRouteStatus('a').exists).toBe(false);
   });
 });

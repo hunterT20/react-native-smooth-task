@@ -8,9 +8,6 @@ import { APP_SCOPE_ID, type TaskCallback } from '../core/types';
 import type { AfterTransitionOptions } from '../types';
 import { useScopedAfterTransition } from './useScopedScheduling';
 
-export function useAfterTransition(
-  callback: TaskCallback,
-  options?: AfterTransitionOptions
-): void {
+export function useAfterTransition(callback: TaskCallback, options?: AfterTransitionOptions): void {
   useScopedAfterTransition(APP_SCOPE_ID, callback, options, 'useAfterTransition');
 }

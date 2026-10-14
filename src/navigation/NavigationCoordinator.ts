@@ -50,10 +50,7 @@ const STANDALONE_DETECTION_DELAY_MS = 2000;
 /** Sink that drops everything (avoids depending on a sibling impl file). */
 const NOOP_SINK: DiagnosticsSink = { emit: () => undefined };
 
-type TransitionEventKind =
-  | 'transition-started'
-  | 'transition-finished'
-  | 'gesture-cancelled';
+type TransitionEventKind = 'transition-started' | 'transition-finished' | 'gesture-cancelled';
 
 interface BufferedEvent {
   readonly kind: TransitionEventKind;
@@ -352,8 +349,7 @@ export function createNavigationCoordinator(
     const hasPendingTransition =
       record !== undefined &&
       record.navNodeIdsOnPath.some((navNodeId) => barriers.hasOpenBarrier(navNodeId));
-    const settled =
-      exists && focusedOnPath && !hasPendingTransition && ready && appActive;
+    const settled = exists && focusedOnPath && !hasPendingTransition && ready && appActive;
     return {
       exists,
       focusedOnPath,

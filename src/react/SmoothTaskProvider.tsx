@@ -20,18 +20,13 @@ import { AppState } from 'react-native';
 import { createTaskScheduler } from '../core/TaskScheduler';
 import { createDefaultIdleHost } from '../core/IdleHost';
 import type { DiagnosticsSink } from '../diagnostics/types';
-import {
-  createConsoleDiagnosticsSink,
-  NOOP_DIAGNOSTICS,
-} from '../diagnostics/Diagnostics';
+import { createConsoleDiagnosticsSink, NOOP_DIAGNOSTICS } from '../diagnostics/Diagnostics';
 import type { Diagnostics, DiagnosticListener } from '../diagnostics/types';
 import { createNavigationCoordinator } from '../navigation/NavigationCoordinator';
 import { SmoothTaskContext } from './SmoothTaskContext';
 import type { SmoothTaskContextValue, SmoothTaskProviderProps } from './types';
 
-function resolveDiagnosticsSink(
-  prop: SmoothTaskProviderProps['diagnostics']
-): DiagnosticsSink {
+function resolveDiagnosticsSink(prop: SmoothTaskProviderProps['diagnostics']): DiagnosticsSink {
   if (prop === true) return createConsoleDiagnosticsSink();
   if (typeof prop === 'object' && prop !== null && typeof prop.emit === 'function') return prop;
   return NOOP_DIAGNOSTICS;

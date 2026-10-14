@@ -10,10 +10,7 @@
 
 import React, { type ReactNode } from 'react';
 import { act } from '@testing-library/react-native';
-import type {
-  NavigationRouteState,
-  NavigationTreeState,
-} from '../../../src/navigation/types';
+import type { NavigationRouteState, NavigationTreeState } from '../../../src/navigation/types';
 import { SmoothTaskProvider } from '../../../src/react/SmoothTaskProvider';
 import type { SmoothTaskProviderProps } from '../../../src/react/types';
 import { flushAllSchedulers } from './fakes';

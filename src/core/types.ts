@@ -7,7 +7,13 @@
  */
 
 import type { DiagnosticsSink } from '../diagnostics/types';
-import type { IdleTaskOptions, SchedulingMode, TaskCallback, TaskHandle, TaskPriority } from '../types';
+import type {
+  IdleTaskOptions,
+  SchedulingMode,
+  TaskCallback,
+  TaskHandle,
+  TaskPriority,
+} from '../types';
 
 export type { TaskCallback, TaskHandle, TaskPriority, SchedulingMode, IdleTaskOptions };
 
@@ -28,12 +34,7 @@ export const routeKeyFromScope = (scopeId: ScopeId): string | null =>
   isRouteScope(scopeId) ? scopeId.slice('route:'.length) : null;
 
 /** Task lifecycle states. */
-export type TaskStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /**
  * Decides whether tasks in a scope may start.

@@ -11,8 +11,12 @@
  */
 
 jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () => jest.requireActual('./fakes').navigationTypesModule());
-jest.mock('../../../src/diagnostics/types', () => jest.requireActual('./fakes').diagnosticsTypesModule());
+jest.mock('../../../src/navigation/types', () =>
+  jest.requireActual('./fakes').navigationTypesModule()
+);
+jest.mock('../../../src/diagnostics/types', () =>
+  jest.requireActual('./fakes').diagnosticsTypesModule()
+);
 
 import React, { useEffect } from 'react';
 import { Text } from 'react-native';
@@ -67,10 +71,9 @@ describe('useDeferredMount (app scope)', () => {
     await pump();
     expect(first.result.current).toBe(true);
     await first.unmount();
-    const second = await renderHook(
-      () => ({ ready: useDeferredMount(), ctx: useSmoothTask() }),
-      { wrapper }
-    );
+    const second = await renderHook(() => ({ ready: useDeferredMount(), ctx: useSmoothTask() }), {
+      wrapper,
+    });
     if (isFakeScheduler(second.result.current.ctx.scheduler)) {
       expect(second.result.current.ready).toBe(false);
     }

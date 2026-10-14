@@ -12,10 +12,7 @@ import { routeScopeId, type TaskCallback } from '../../core/types';
 import type { AfterTransitionOptions } from '../../types';
 import { useScopedAfterTransition } from '../useScopedScheduling';
 
-export function useAfterTransition(
-  callback: TaskCallback,
-  options?: AfterTransitionOptions
-): void {
+export function useAfterTransition(callback: TaskCallback, options?: AfterTransitionOptions): void {
   const route = useRoute();
   useScopedAfterTransition(routeScopeId(route.key), callback, options, 'useAfterTransition');
 }

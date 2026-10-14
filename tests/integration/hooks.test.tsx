@@ -63,9 +63,9 @@ beforeEach(() => {
 describe('T21 — missing provider diagnostics', () => {
   it('hooks throw a clear error outside SmoothTaskProvider', async () => {
     // React logs the throw; assert the message reaches the test.
-    await expect(
-      renderHook(() => useDeferredMount())
-    ).rejects.toThrow(/must be used within <SmoothTaskProvider>/);
+    await expect(renderHook(() => useDeferredMount())).rejects.toThrow(
+      /must be used within <SmoothTaskProvider>/
+    );
   });
 });
 
