@@ -1,0 +1,114 @@
+{
+  "name": "react-native-smooth-task",
+  "version": "0.1.0",
+  "description": "Transition-aware task scheduling for React Native: defer heavy work until navigation animations settle.",
+  "keywords": [
+    "react-native",
+    "react-navigation",
+    "transition",
+    "scheduler",
+    "idle",
+    "performance"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "source": "./src/index.ts",
+  "react-native": "./src/index.ts",
+  "main": "./lib/commonjs/index.js",
+  "module": "./lib/module/index.js",
+  "types": "./lib/typescript/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./src/index.ts",
+      "module": "./lib/module/index.js",
+      "import": "./lib/module/index.js",
+      "require": "./lib/commonjs/index.js",
+      "default": "./lib/module/index.js"
+    },
+    "./stack": {
+      "types": "./lib/typescript/stack.d.ts",
+      "react-native": "./src/stack.ts",
+      "module": "./lib/module/stack.js",
+      "import": "./lib/module/stack.js",
+      "require": "./lib/commonjs/stack.js",
+      "default": "./lib/module/stack.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "stack",
+    "README.md",
+    "CHANGELOG.md",
+    "!**/__tests__",
+    "!**/*.test.*"
+  ],
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
+    "build": "bob build",
+    "clean": "rm -rf lib coverage",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
+  },
+  "peerDependencies": {
+    "@react-navigation/native": ">=7.0.0 <8",
+    "@react-navigation/stack": ">=7.0.0 <8",
+    "react": ">=19.1.1 <20",
+    "react-native": ">=0.82.0 <1"
+  },
+  "peerDependenciesMeta": {
+    "@react-navigation/native": {
+      "optional": true
+    },
+    "@react-navigation/stack": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.3",
+    "@react-native/babel-preset": "0.87.1",
+    "@react-native/jest-preset": "0.87.1",
+    "@react-navigation/native": "7.5.1",
+    "@react-navigation/stack": "7.12.1",
+    "@testing-library/react-native": "14.1.0",
+    "@types/jest": "30.0.0",
+    "@types/react": "19.3.0",
+    "eslint": "10.12.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "jest": "30.5.2",
+    "prettier": "3.9.10",
+    "react": "19.3.1",
+    "react-native": "0.87.1",
+    "react-native-builder-bob": "0.43.2",
+    "react-native-gesture-handler": "3.3.0",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.30.0",
+    "test-renderer": "1.3.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.2"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      "commonjs",
+      "module",
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
