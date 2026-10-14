@@ -19,10 +19,19 @@ export type {
 
 export type { DiagnosticEvent, DiagnosticLevel, DiagnosticsSink } from './diagnostics/types';
 
-// Filled in by the react integration milestone:
-// export { SmoothTaskProvider } from './react/SmoothTaskProvider';
-// export { useDeferredMount } from './react/useDeferredMount';
-// export { useAfterTransition } from './react/useAfterTransition';
-// export { useIdleTask } from './react/useIdleTask';
-// export { DeferredView } from './react/DeferredView';
-// export { useSmoothNavigationContainer } from './react/useSmoothNavigationContainer';
+export type {
+  SmoothTaskContextValue,
+  SmoothTaskProviderProps,
+  DeferredViewProps,
+  NavigationContainerObservers,
+  UseSmoothNavigationContainerOptions,
+} from './react/types';
+
+export { SmoothTaskProvider } from './react/SmoothTaskProvider';
+export { useSmoothTask, SmoothTaskContext } from './react/SmoothTaskContext';
+export { useDeferredMount } from './react/useDeferredMount';
+export { useAfterTransition } from './react/useAfterTransition';
+export { useIdleTask } from './react/useIdleTask';
+export { DeferredView } from './react/DeferredView';
+export { useSmoothNavigationContainer } from './react/useSmoothNavigationContainer';
+export type { SmoothNavigationContainerOptions } from './react/useSmoothNavigationContainer';

@@ -7,11 +7,23 @@
  * root entry run in the app scope instead.
  */
 
-export {};
+export { useSmoothStackListeners } from './navigation/stack/useSmoothStackListeners';
+export type {
+  SmoothStackListeners,
+  StackListenerEvent,
+  StackLifecycleEvent,
+} from './navigation/stack/useSmoothStackListeners';
 
-// Filled in by the react integration milestone:
-// export { useSmoothStackListeners } from './navigation/stack/useSmoothStackListeners';
-// export { useDeferredMount } from './react/routeScoped/useDeferredMount';
-// export { useAfterTransition } from './react/routeScoped/useAfterTransition';
-// export { useIdleTask } from './react/routeScoped/useIdleTask';
-// export { DeferredView } from './react/routeScoped/DeferredView';
+export { useDeferredMount } from './react/routeScoped/useDeferredMount';
+export { useAfterTransition } from './react/routeScoped/useAfterTransition';
+export { useIdleTask } from './react/routeScoped/useIdleTask';
+export { DeferredView } from './react/routeScoped/DeferredView';
+
+export type { SmoothStackListenersOptions, DeferredViewProps } from './react/types';
+export type {
+  DeferredMountOptions,
+  AfterTransitionOptions,
+  IdleTaskOptions,
+  TaskHandle,
+  TaskCallback,
+} from './types';

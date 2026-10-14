@@ -21,18 +21,12 @@
     ".": {
       "types": "./lib/typescript/index.d.ts",
       "react-native": "./src/index.ts",
-      "module": "./lib/module/index.js",
-      "import": "./lib/module/index.js",
-      "require": "./lib/commonjs/index.js",
-      "default": "./lib/module/index.js"
+      "default": "./lib/commonjs/index.js"
     },
     "./stack": {
       "types": "./lib/typescript/stack.d.ts",
       "react-native": "./src/stack.ts",
-      "module": "./lib/module/stack.js",
-      "import": "./lib/module/stack.js",
-      "require": "./lib/commonjs/stack.js",
-      "default": "./lib/module/stack.js"
+      "default": "./lib/commonjs/stack.js"
     },
     "./package.json": "./package.json"
   },
