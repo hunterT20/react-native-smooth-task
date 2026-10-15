@@ -95,10 +95,13 @@ far only via hand-simulated state trees and events:
 
 - **T11 — `animation: 'none'` fidelity.** Whether React Navigation emits
   `transitionStart`/`transitionEnd` (and in what order/timing) for screens
-  with animations disabled. If no `transitionEnd` ever fires, a barrier opened
-  by `transitionStart` would stay open until the navNode purges or the 4s
-  `stalled-transition` warning fires — the barrier would still not
-  auto-release (by design). Needs on-device confirmation.
+  with animations disabled — on both `@react-navigation/stack` and
+  `@react-navigation/native-stack`. If no `transitionEnd` ever fires, a
+  barrier opened by `transitionStart` stays open (the 4s
+  `stalled-transition` warning fires but never auto-releases — by design).
+  Mitigation shipped: fully non-animated navigators should pass
+  `animationEnabled: false` to the listener hook. Per-screen `animation:
+'none'` on a mixed navigator still needs on-device confirmation.
 - **Real gesture animations.** Interactive swipe-back timing, partial
   gestures, gesture-cancel → recovery `transitionEnd` delivery — simulated in
   T04/T05 but not against real drivers.

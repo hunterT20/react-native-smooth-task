@@ -33,6 +33,7 @@ interface SmoothTaskProviderProps {
   children?: ReactNode;
   diagnostics?: boolean | { emit(event: DiagnosticEvent): void };
   pauseInBackground?: boolean; // default: true
+  missingAdapterPolicy?: 'strict' | 'degraded'; // default: 'strict'
 }
 ```
 
@@ -48,6 +49,17 @@ Both are created exactly once and disposed on unmount.
   the coordinator; while the app is not `active`, **route** scopes are
   ineligible. App-scoped tasks are never affected. When `false`, no AppState
   subscription is created at all.
+- **`missingAdapterPolicy`** (default `'strict'`) — what happens when no
+  navigation wiring reaches the coordinator ~2s after the first eligibility
+  query (no state delivery, no navigator registration):
+  - `'strict'` — a `missing-adapter` warning fires once and route scopes
+    **stay gated**: a miswired app fails closed instead of running heavy
+    work ungated mid-transition.
+  - `'degraded'` — opt-in fallback: all scopes become eligible after the
+    window (a no-navigation app's behavior), for screens deliberately
+    rendered outside a wired container (storybooks, tests).
+  - Either way: wiring that appears later restores normal gating
+    immediately; app-scoped tasks are never affected.
 
 ### `useDeferredMount`
 
@@ -84,7 +96,10 @@ interface AfterTransitionOptions {
 
 Schedules `callback(signal)` to run when the scope is eligible.
 
-- **`mode: 'once'`** (default): runs a single time.
+- **`mode: 'once'`** (default): **started at most once**. A task cancelled
+  before it starts (unmount, scope never eligible) simply never runs; a
+  callback that throws is reported via `onError`/`task-failed` and is never
+  retried — "once" means armed once, not "completed successfully once".
 - **`mode: 'every-focus'`**: arms a fresh task each time the route's
   `focusEpoch` increments (a `focusedOnPath` false→true edge). One run per
   epoch — barrier churn while focused does not re-fire, and a still-pending
@@ -264,6 +279,7 @@ function useSmoothStackListeners(options?: SmoothStackListenersOptions): SmoothS
 
 interface SmoothStackListenersOptions {
   id?: string; // diagnostics label only
+  animationEnabled?: boolean; // default: true — see below
 }
 
 interface SmoothStackListeners {
@@ -295,6 +311,16 @@ function HomeStackScreen() {
   the navigation state tree delivered via `useSmoothNavigationContainer`.
 - The returned object is referentially stable for the lifetime of the hook; no
   `screenOptions` or component wrapping is needed.
+- **`animationEnabled: false`** — for navigators whose screens disable
+  animation entirely (JS stack `screenOptions={{ animationEnabled: false }}`,
+  native-stack `animation: 'none'`). All three transition events
+  (`transitionStart`/`transitionEnd`/`gestureCancel`) are then ignored, so no
+  barrier ever opens and tasks settle on focus alone. This exists because a
+  `transitionStart` without a matching `transitionEnd` would otherwise keep
+  the barrier open forever (only a `stalled-transition` warning fires — by
+  design, timers never auto-release barriers). **Per-screen** `animation:
+'none'` on an otherwise animated navigator cannot be detected at the
+  screenListeners level — keep the default for mixed navigators.
 
 Non-stack navigators (tabs, drawers) need no listener wiring: their focus is
 derived from `index` in the state tree on every `onStateChange`.
@@ -334,6 +360,9 @@ Native-stack differences to be aware of:
 - Screens with `animation: 'none'` may emit both events in one frame, or
   skip `transitionEnd` on some react-native-screens versions — the barrier
   then stays open and a `stalled-transition` diagnostic warns after ~4s.
+  For a fully non-animated navigator use
+  `useSmoothNativeStackListeners({ animationEnabled: false })` to skip
+  barriers entirely (same option on `useSmoothStackListeners`).
 - Real-device event fidelity for native-stack is pending device validation;
   adapter forwarding and gating are covered by unit tests.
 
@@ -363,7 +392,14 @@ late resolution/rejection is swallowed (never marked failed, never calls
 `IdleTaskOptions.key` (and the internal keys used by `useAfterTransition`)
 index **pending** tasks by scope+key. Scheduling a second pending task with
 the same key cancels the first. Different scopes never dedupe each other, and
-a task already running is never cancelled by a later same-key schedule.
+a task already running is never cancelled by a later same-key schedule — the
+new task simply queues as pending and runs after it.
+
+Trade-off note: repeatedly scheduling the same key while a transition keeps
+the scope ineligible means the queued callback is _replaced_ each time, so a
+continuously re-keyed task may wait arbitrarily long. That is the intended
+semantics for "latest data wins" work (prefetch, warm caches); for work that
+must eventually run, use distinct keys.
 
 ### Error handling
 
@@ -384,21 +420,21 @@ a task cancelled before it starts is guaranteed never to run.
 
 Emitted through the `diagnostics` provider prop / `context.diagnostics`:
 
-| Code                                                                    | Level | Meaning                                                                                                                   |
-| ----------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- |
-| `task-scheduled` / `task-started` / `task-completed` / `task-cancelled` | debug | Task lifecycle.                                                                                                           |
-| `task-failed`                                                           | error | Callback threw or rejected; `details.error` carries it.                                                                   |
-| `barrier-opened` / `barrier-closed`                                     | debug | Transition barrier lifecycle per navigator node.                                                                          |
-| `barrier-already-open`                                                  | debug | `transitionStart` ignored — the navigator already has a barrier.                                                          |
-| `no-open-barrier`                                                       | debug | `transitionEnd` arrived with no open barrier on that navigator.                                                           |
-| `gesture-recovery`                                                      | debug | Gesture cancelled — barrier held open for the recovery animation.                                                         |
-| `stalled-transition`                                                    | warn  | A barrier has been open longer than `stallWarningMs` (default 4000ms). Detection only — barriers are never auto-released. |
-| `event-buffered`                                                        | debug | A transition event arrived for a route key that cannot be resolved yet; replayed on the next state delivery.              |
-| `dropped-event`                                                         | warn  | A buffered event expired (~2s TTL) without its route resolving.                                                           |
-| `navigation-ready`                                                      | info  | First navigation state delivered.                                                                                         |
-| `navigator-registered` / `navigator-unregistered`                       | info  | `useSmoothStackListeners` mount/unmount.                                                                                  |
-| `app-state`                                                             | debug | Foreground/background transitions.                                                                                        |
-| `untracked-route`                                                       | warn  | A route scope was queried for a key never observed in any delivered state (once per key).                                 |
-| `unknown-scope`                                                         | debug | A scope with an unrecognized prefix was treated as always eligible (once per prefix).                                     |
-| `missing-adapter`                                                       | warn  | No navigation state or navigator registration for ~2s — degraded standalone mode, all scopes eligible.                    |
-| `missing-nav-ref`                                                       | warn  | `onReady` fired but no state could be resolved via `getRootState`/`navigationRef` (once per hook instance).               |
+| Code                                                                    | Level | Meaning                                                                                                                             |
+| ----------------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `task-scheduled` / `task-started` / `task-completed` / `task-cancelled` | debug | Task lifecycle.                                                                                                                     |
+| `task-failed`                                                           | error | Callback threw or rejected; `details.error` carries it.                                                                             |
+| `barrier-opened` / `barrier-closed`                                     | debug | Transition barrier lifecycle per navigator node.                                                                                    |
+| `barrier-already-open`                                                  | debug | `transitionStart` ignored — the navigator already has a barrier.                                                                    |
+| `no-open-barrier`                                                       | debug | `transitionEnd` arrived with no open barrier on that navigator.                                                                     |
+| `gesture-recovery`                                                      | debug | Gesture cancelled — barrier held open for the recovery animation.                                                                   |
+| `stalled-transition`                                                    | warn  | A barrier has been open longer than `stallWarningMs` (default 4000ms). Detection only — barriers are never auto-released.           |
+| `event-buffered`                                                        | debug | A transition event arrived for a route key that cannot be resolved yet; replayed on the next state delivery.                        |
+| `dropped-event`                                                         | warn  | A buffered event expired (~2s TTL) without its route resolving.                                                                     |
+| `navigation-ready`                                                      | info  | First navigation state delivered.                                                                                                   |
+| `navigator-registered` / `navigator-unregistered`                       | info  | `useSmoothStackListeners` mount/unmount.                                                                                            |
+| `app-state`                                                             | debug | Foreground/background transitions.                                                                                                  |
+| `untracked-route`                                                       | warn  | A route scope was queried for a key never observed in any delivered state (once per key).                                           |
+| `unknown-scope`                                                         | debug | A scope with an unrecognized prefix was treated as always eligible (once per prefix).                                               |
+| `missing-adapter`                                                       | warn  | No navigation state or navigator registration for ~2s — strict (default): route scopes stay gated; `degraded`: all scopes eligible. |
+| `missing-nav-ref`                                                       | warn  | `onReady` fired but no state could be resolved via `getRootState`/`navigationRef` (once per hook instance).                         |

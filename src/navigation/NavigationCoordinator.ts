@@ -37,13 +37,13 @@ const BUFFERED_EVENT_TTL_MS = 2000;
 /**
  * How long the coordinator waits for any sign of navigation wiring (a
  * navigator registration, a state delivery, a listener event) before
- * declaring degraded standalone mode: `ready === false &&
+ * treating the app as having no navigation adapter: `ready === false &&
  * navigatorCount === 0` persisting for this long means no adapter exists.
+ * What happens next depends on `missingAdapterPolicy` — see below.
  *
  * The delay is deliberate: listener hooks register in the first commit —
- * AFTER their screen children — so an instant check would briefly declare
- * every correctly wired app "standalone" during mount and run route-scoped
- * work before navigation ever reported a state.
+ * AFTER their screen children — so an instant check would briefly flag
+ * every correctly wired app during mount.
  */
 const STANDALONE_DETECTION_DELAY_MS = 2000;
 
@@ -69,6 +69,12 @@ export function createNavigationCoordinator(
 ): NavigationCoordinator {
   const timers: TimerHost = deps.timers ?? createDefaultTimerHost();
   const sink = deps.diagnostics ?? NOOP_SINK;
+  /**
+   * 'strict' (default): missing wiring fails closed — route scopes stay
+   * gated forever rather than running ungated mid-transition.
+   * 'degraded': opt-in — after the delay, all scopes become eligible.
+   */
+  const missingAdapterPolicy = deps.missingAdapterPolicy ?? 'strict';
 
   const emit = (
     level: DiagnosticLevel,
@@ -108,7 +114,7 @@ export function createNavigationCoordinator(
   const warnedUntrackedRoutes = new Set<string>();
   const warnedUnknownScopePrefixes = new Set<string>();
 
-  // Degraded standalone mode (see STANDALONE_DETECTION_DELAY_MS above).
+  // Missing-adapter detection (see STANDALONE_DETECTION_DELAY_MS above).
   let standaloneDeclared = false;
   let standaloneCheckHandle: unknown = null;
   let missingAdapterWarned = false;
@@ -125,8 +131,9 @@ export function createNavigationCoordinator(
 
   /**
    * Any evidence that navigation exists (state delivery, adapter
-   * registration, listener event) cancels standalone detection and clears a
-   * previous declaration — the coordinator then gates normally again.
+   * registration, listener event) cancels the detection timer and clears a
+   * previous degraded declaration — the coordinator then gates normally
+   * again.
    */
   function noteNavigationSignal(): void {
     if (standaloneCheckHandle !== null) {
@@ -134,6 +141,9 @@ export function createNavigationCoordinator(
       standaloneCheckHandle = null;
     }
     standaloneDeclared = false;
+    // Wiring appeared — if it disappears again the app deserves a fresh
+    // missing-adapter warning rather than silence.
+    missingAdapterWarned = false;
   }
 
   function isStandaloneDegraded(): boolean {
@@ -141,7 +151,7 @@ export function createNavigationCoordinator(
   }
 
   /**
-   * Arm the standalone-detection timer when the degraded condition
+   * Arm the missing-adapter detection timer when the unwired condition
    * (`!ready && navigatorCount === 0`) currently holds. On expiry the
    * condition is re-checked — wiring that arrived meanwhile keeps normal
    * gating.
@@ -149,19 +159,29 @@ export function createNavigationCoordinator(
   function maybeArmStandaloneCheck(): void {
     if (disposed || standaloneDeclared || standaloneCheckHandle !== null) return;
     if (ready || navigators.size !== 0) return;
+    // Strict mode only needs the one-shot warning; once fired, arming again
+    // would just notify() every 2s with nothing new to report. If wiring
+    // ever arrives, the signal paths clear this flag via
+    // missingAdapterWarned reset in noteNavigationSignal.
+    if (missingAdapterPolicy === 'strict' && missingAdapterWarned) return;
     standaloneCheckHandle = timers.setTimeout(() => {
       standaloneCheckHandle = null;
       if (disposed || ready || navigators.size !== 0) return;
-      standaloneDeclared = true;
+      if (missingAdapterPolicy === 'degraded') standaloneDeclared = true;
       if (!missingAdapterWarned) {
         missingAdapterWarned = true;
         emit(
           'warn',
           'missing-adapter',
-          'react-native-smooth-task: no navigation state or navigator adapter ' +
-            'detected — running in degraded standalone mode; all scopes are eligible. ' +
-            'Wire useSmoothNavigationContainer / useSmoothStackListeners for ' +
-            'transition-aware gating.',
+          missingAdapterPolicy === 'degraded'
+            ? 'react-native-smooth-task: no navigation state or navigator adapter ' +
+                'detected — running in degraded standalone mode; all scopes are eligible. ' +
+                'Wire useSmoothNavigationContainer / useSmoothStackListeners for ' +
+                'transition-aware gating.'
+            : 'react-native-smooth-task: no navigation state or navigator adapter ' +
+                'detected — route-scoped tasks stay gated (missingAdapterPolicy: ' +
+                "'strict'). Wire useSmoothNavigationContainer plus listener hooks, " +
+                "or pass missingAdapterPolicy='degraded' to opt into ungated execution.",
           {}
         );
       }

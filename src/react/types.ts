@@ -6,7 +6,11 @@
  * root entry stays usable without navigation installed.
  */
 
-import type { NavigationCoordinator, NavigationTreeState } from '../navigation/types';
+import type {
+  MissingAdapterPolicy,
+  NavigationCoordinator,
+  NavigationTreeState,
+} from '../navigation/types';
 import type { TaskScheduler } from '../core/types';
 import type { Diagnostics } from '../diagnostics/types';
 import type { DeferredMountOptions } from '../types';
@@ -34,6 +38,15 @@ export interface SmoothTaskProviderProps {
    * not in 'active' AppState. App-scoped tasks are never affected.
    */
   pauseInBackground?: boolean;
+  /**
+   * Policy when no navigation wiring reaches the coordinator (~2s with no
+   * state delivery and no navigator registration):
+   * - 'strict' (default): route scopes stay gated; a `missing-adapter`
+   *   warning fires once. Miswired apps fail closed.
+   * - 'degraded': opt-in — all scopes become eligible (previous behavior).
+   * App-scoped tasks are unaffected either way.
+   */
+  missingAdapterPolicy?: MissingAdapterPolicy;
 }
 
 /** Result of useSmoothNavigationContainer — spread onto NavigationContainer. */
@@ -64,4 +77,16 @@ export interface DeferredViewProps {
  */
 export interface SmoothStackListenersOptions {
   id?: string;
+  /**
+   * Set to `false` when the navigator's screens disable animation entirely
+   * (JS stack `screenOptions={{ animationEnabled: false }}` or native-stack
+   * `animation: 'none'`). Transition events are then ignored — no barriers
+   * are ever opened, so tasks settle on focus alone.
+   *
+   * Per-screen `animation: 'none'` on an otherwise animated navigator
+   * cannot be detected at the screenListeners level: keep the default and
+   * rely on the real events; if a `transitionEnd` is ever lost, a
+   * `stalled-transition` diagnostic warns (the barrier never auto-releases).
+   */
+  animationEnabled?: boolean;
 }

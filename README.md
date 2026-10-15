@@ -198,9 +198,13 @@ animations).
 > **Native-stack event notes.** Its events are driven by the native side
 > (react-native-screens): `gestureCancel` is iOS-only (Android never emits
 > it, which is harmless), and `transitionStart`/`transitionEnd` correlate
-> with the native transition rather than a JS animation clock. If a screen
-> uses `animation: 'none'` and a `transitionEnd` never arrives, the barrier
-> stays open and a `stalled-transition` diagnostic warns after ~4s.
+> with the native transition rather than a JS animation clock.
+>
+> **Navigators with animation fully disabled** — pass
+> `animationEnabled: false` to the listener hook so no barrier ever opens
+> (applies to both adapters). For mixed navigators, a lost `transitionEnd`
+> leaves the barrier open and `stalled-transition` warns after ~4s — the
+> barrier never auto-releases on a timer by design.
 
 > **Do I need this on tabs / drawers / custom navigators?** No. Focus for
 > non-stack navigators is derived from the state tree automatically — only
@@ -299,6 +303,16 @@ function FeedScreen() {
 Options: `mode` (`'once'` | `'every-focus'`), `scheduling` (`'transition'` |
 `'idle'`), `onError(error)` for thrown/rejected callbacks.
 
+Semantics worth knowing:
+
+- `'once'` means **started at most once** — if the task is cancelled before
+  it starts (unmount, screen never settles) it simply never runs; if the
+  callback throws it is reported via `onError`/`task-failed` and is **not**
+  retried.
+- `every-focus` arms one task per focus epoch — a still-pending arm from a
+  previous epoch is cancelled (latest-wins), so the callback runs at most
+  once per epoch.
+
 > `every-focus` only makes sense on **route** scopes — app scope has no
 > "focus", so it behaves like `'once'` there.
 
@@ -326,15 +340,18 @@ function FeedScreen() {
 - Runs inside `requestIdleCallback`-style idle time, **only while the scope
   is eligible** — a route transition pauses it; eligibility is re-checked at
   the last moment before it starts.
-- `key` dedupes within the scope: scheduling again with a pending key
-  cancels the previous task ("latest wins").
+- `key` dedupes within the scope: scheduling again with a _pending_ key
+  cancels the previous task ("latest wins"). A task that already _started_
+  is never deduped — the new task simply queues behind it.
 - Every callback gets an `AbortSignal` — check `signal.aborted` in long async
   work to cooperate with cancellation.
 
 ### Recipe — fetch early, render late
 
-The highest-leverage pattern: start the network request immediately (it runs
-off the JS thread anyway), defer only the heavy render:
+The highest-leverage pattern: start the network request immediately, defer
+only the heavy render. The request itself is mostly off the JS thread, but
+keep response parsing/normalization light — that part still runs on JS and
+can compete with the transition if it is heavy.
 
 ```tsx
 function DetailScreen({ id }) {
@@ -394,14 +411,24 @@ import { SmoothTaskProvider, useDeferredMount } from 'react-native-smooth-task';
 </SmoothTaskProvider>;
 ```
 
-If you _do_ have navigation but forget the wiring (no container hook, no
-stack listeners), the coordinator detects the missing adapter after ~2s and
-falls back to a **degraded standalone mode** — everything becomes eligible
-with a `missing-adapter` warning rather than silently deadlocking. Wire the
-adapter properly for real transition gating.
+If you _do_ have navigation but the wiring is missing (no container hook,
+no stack listeners), the coordinator emits a `missing-adapter` warning
+after ~2s and **keeps route-scoped tasks gated** (default policy:
+`missingAdapterPolicy="strict"`). A miswired app fails closed — skeletons
+stay visible with a loud diagnostic — instead of silently running heavy
+work during transitions.
+
+For deliberate ungated fallback (e.g. screens rendered outside a wired
+container in storybooks/tests), opt in explicitly:
+
+```tsx
+<SmoothTaskProvider missingAdapterPolicy="degraded">
+  <App />
+</SmoothTaskProvider>
+```
 
 > Route-scoped hooks still call `useRoute()` internally — they must render
-> inside a navigator regardless.
+> inside a navigator regardless of policy.
 
 ## Diagnostics
 
@@ -418,35 +445,35 @@ Pass `diagnostics` to the provider to watch scheduling decisions:
 Every event carries `code`, `level`, `scopeId`/`routeKey`, `details`,
 `timestamp`. The ones you'll actually look at:
 
-| Code                    | Level | Meaning                                                         |
-| ----------------------- | ----- | --------------------------------------------------------------- |
-| `task-failed`           | error | A callback threw — `details.error` has it                       |
-| `stalled-transition`    | warn  | Barrier open >4s — a `transitionEnd` may never have arrived     |
-| `missing-adapter`       | warn  | No nav wiring detected after ~2s — degraded standalone mode     |
-| `missing-nav-ref`       | warn  | `onReady` couldn't resolve initial state — pass `navigationRef` |
-| `untracked-route`       | warn  | Task queried for a route key never seen in the state tree       |
-| `barrier-opened/closed` | debug | Transition lifecycle per navigator                              |
+| Code                    | Level | Meaning                                                                                 |
+| ----------------------- | ----- | --------------------------------------------------------------------------------------- |
+| `task-failed`           | error | A callback threw — `details.error` has it                                               |
+| `stalled-transition`    | warn  | Barrier open >4s — a `transitionEnd` may never have arrived                             |
+| `missing-adapter`       | warn  | No nav wiring after ~2s — route tasks stay gated (strict) or ungate (`degraded` policy) |
+| `missing-nav-ref`       | warn  | `onReady` couldn't resolve initial state — pass `navigationRef`                         |
+| `untracked-route`       | warn  | Task queried for a route key never seen in the state tree                               |
+| `barrier-opened/closed` | debug | Transition lifecycle per navigator                                                      |
 
 Full catalog: [docs/api.md — Diagnostic codes](docs/api.md#diagnostic-codes).
 
 ## Troubleshooting
 
-| Symptom                                             | Likely cause                                                                                              | Fix                                                                                              |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `useDeferredMount` never turns `true` on a screen   | That stack navigator is missing `screenListeners`, **or** route isn't focused                             | Add `useSmoothStackListeners` to every stack with animated screens; check `untracked-route` warn |
-| Nothing runs and you see `missing-nav-ref` warning  | `onReady` had no way to read initial state                                                                | Pass `navigationRef` (or `getRootState`) to `useSmoothNavigationContainer`                       |
-| `missing-adapter` warning + everything runs ungated | No nav state or listener registration reached the coordinator for ~2s                                     | Complete setup steps 2–3                                                                         |
-| `must be used within <SmoothTaskProvider>` throw    | Hook called above/outside the provider (incl. `useSmoothNavigationContainer` next to the provider itself) | Move container wiring into a child component                                                     |
-| `useRoute()`-related error outside a screen         | Route-scoped (`/stack` or `/native-stack`) hooks used outside a route                                     | Render inside a screen, or use the app-scope version from the root entry                         |
-| `every-focus` fires only once                       | Used from the root entry — `app` scope has no focus epochs                                                | Import the route-scoped version from `/stack` or `/native-stack`                                 |
-| Task "ran during the animation"                     | That screen's navigator has no listeners attached, or route was already settled                           | Attach `useSmoothStackListeners` to the owning stack                                             |
-| Screens with `animation: 'none'`                    | Stack still emits transition events; task runs right after `transitionEnd`                                | No action needed — if a `transitionEnd` never arrives, `stalled-transition` warns after ~4s      |
+| Symptom                                            | Likely cause                                                                                              | Fix                                                                                                                             |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `useDeferredMount` never turns `true` on a screen  | That stack navigator is missing `screenListeners`, **or** route isn't focused                             | Add `useSmoothStackListeners` to every stack with animated screens; check `untracked-route` warn                                |
+| Nothing runs and you see `missing-nav-ref` warning | `onReady` had no way to read initial state                                                                | Pass `navigationRef` (or `getRootState`) to `useSmoothNavigationContainer`                                                      |
+| `missing-adapter` warning + route tasks never run  | No nav wiring reached the coordinator for ~2s — strict policy is failing closed as designed               | Complete setup steps 2–3, or pass `missingAdapterPolicy="degraded"` if ungated was intended                                     |
+| `must be used within <SmoothTaskProvider>` throw   | Hook called above/outside the provider (incl. `useSmoothNavigationContainer` next to the provider itself) | Move container wiring into a child component                                                                                    |
+| `useRoute()`-related error outside a screen        | Route-scoped (`/stack` or `/native-stack`) hooks used outside a route                                     | Render inside a screen, or use the app-scope version from the root entry                                                        |
+| `every-focus` fires only once                      | Used from the root entry — `app` scope has no focus epochs                                                | Import the route-scoped version from `/stack` or `/native-stack`                                                                |
+| Task "ran during the animation"                    | That screen's navigator has no listeners attached, or route was already settled                           | Attach `useSmoothStackListeners` to the owning stack                                                                            |
+| Screens with `animation: 'none'`                   | Whole navigator is non-animated, or a `transitionEnd` was lost mid-stack                                  | Fully non-animated navigator → `useSmoothStackListeners({ animationEnabled: false })`; otherwise `stalled-transition` warns ~4s |
 
 ## API cheat sheet
 
 ```ts
 // Root entry — app scope (no navigation needed)
-SmoothTaskProvider({ diagnostics?, pauseInBackground? })
+SmoothTaskProvider({ diagnostics?, pauseInBackground?, missingAdapterPolicy? })
 useDeferredMount({ scheduling? }): boolean
 useAfterTransition(cb, { mode?, scheduling?, onError? }): void
 useIdleTask(): (cb, { key?, priority? }) => TaskHandle
@@ -454,18 +481,19 @@ useIdleTask(): (cb, { key?, priority? }) => TaskHandle
 useSmoothNavigationContainer({ navigationRef?, getRootState?, onReady?, onStateChange? })
 
 // react-native-smooth-task/stack — route scope (JS stack)
-useSmoothStackListeners({ id? }): ScreenListeners   // → screenListeners prop
+useSmoothStackListeners({ id?, animationEnabled? }): ScreenListeners   // → screenListeners prop
 
 // react-native-smooth-task/native-stack — route scope (native stack)
-useSmoothNativeStackListeners({ id? }): ScreenListeners
+useSmoothNativeStackListeners({ id?, animationEnabled? }): ScreenListeners
 
 // both adapter entries also export, route-bound:
 useDeferredMount / useAfterTransition / useIdleTask / DeferredView
 ```
 
 Defaults: `useDeferredMount` → `scheduling: 'transition'` (user-visible);
-`useAfterTransition` → `mode: 'once'`; `useIdleTask` → `priority:
-'background'`, `scheduling: 'idle'`; `pauseInBackground` → `true`.
+`useAfterTransition` → `mode: 'once'` (started once, never retried);
+`useIdleTask` → `priority: 'background'`, `scheduling: 'idle'`;
+`pauseInBackground` → `true`; `missingAdapterPolicy` → `'strict'`.
 
 Full signatures and semantics: [docs/api.md](docs/api.md).
 
@@ -473,9 +501,11 @@ Full signatures and semantics: [docs/api.md](docs/api.md).
 
 Verified baseline (registry-checked 2026-10-15): **RN 0.87.1 ·
 @react-navigation/native 7.5.1 · @react-navigation/stack 7.12.1 · React
-19.3.1**. Peer floor (`RN 0.82` / Nav `7.0`) is the declared candidate —
-validated combinations are tracked in
-[docs/compatibility.md](docs/compatibility.md). RN 0.88 RC and Navigation 8
+19.3.1**. The peer floor (`RN 0.82` / Nav `7.0` / React `19.1.1`) is a
+**declared candidate, not yet verified** — treat it as experimental until
+the compatibility matrix in
+[docs/compatibility.md](docs/compatibility.md) covers it with CI runs.
+RN 0.88 RC and Navigation 8
 are forward-compat targets under a separate test matrix — not release blockers.
 
 Adapters exist for both `@react-navigation/stack` (JS stack) and

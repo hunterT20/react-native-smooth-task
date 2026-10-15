@@ -25,6 +25,18 @@ export interface NavigationTreeState {
 
 export type NavigatorKind = 'stack' | 'native-stack' | 'tab' | 'unknown';
 
+/**
+ * Policy for the no-navigation-wiring case (~2s with no navigator
+ * registration and no delivered navigation state):
+ * - 'strict' (default): emit a `missing-adapter` warning and keep route
+ *   scopes gated — a miswired app fails closed (tasks stay pending with a
+ *   loud diagnostic) instead of running heavy work ungated mid-transition.
+ * - 'degraded': opt-in fallback — after the detection delay all scopes
+ *   become eligible, matching a no-navigation app's behavior. Useful for
+ *   screens rendered outside a wired container (storybooks, tests).
+ */
+export type MissingAdapterPolicy = 'strict' | 'degraded';
+
 export interface NavigatorRegistration {
   /** Unique per mounted navigator hook instance (never reused). */
   instanceId: string;
@@ -73,6 +85,11 @@ export interface NavigationCoordinatorDeps {
   stallWarningMs?: number;
   /** Injectable timers for stall warnings — defaults to global timers. */
   timers?: TimerHost;
+  /**
+   * What happens when no navigation wiring is detected after ~2s.
+   * Defaults to 'strict' — see MissingAdapterPolicy.
+   */
+  missingAdapterPolicy?: MissingAdapterPolicy;
 }
 
 /**

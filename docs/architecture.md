@@ -148,20 +148,29 @@ silently runs heavy work mid-animation".
   still-pending arm from a previous epoch is cancelled (latest-wins), so the
   callback runs at most once per epoch.
 
-## Degraded standalone mode
+## Missing-adapter policy
 
 If, ~2s after the first eligibility query, no navigation signal has ever
 arrived (no state delivery, no navigator registration, no listener event —
 i.e. `ready === false && navigatorCount === 0` persistently), the coordinator
-declares degraded standalone mode: **all scopes become eligible** and a
-`missing-adapter` warning is emitted once.
+emits a `missing-adapter` warning once. What happens to route scopes is a
+policy decision (`missingAdapterPolicy`, default `'strict'`):
 
-The 2s delay is deliberate: navigator listener hooks register in the first
-commit, _after_ their screen children render, so an instant check would
-wrongly declare every correctly wired app standalone during mount and let
-route-scoped work run before navigation reported anything. The declaration is
-re-evaluated live — any later navigation signal cancels/undoes it and normal
-gating resumes.
+- **`'strict'` (fail closed, default)** — route scopes stay gated. A
+  miswired app's tasks remain pending with a loud diagnostic rather than
+  running heavy work ungated — possibly mid-transition, which would
+  violate the library's core guarantee.
+- **`'degraded'` (fail open, opt-in)** — all scopes become eligible after
+  the detection window. Intended for deliberate standalone use (e.g.
+  screens rendered outside a wired container in storybooks/tests).
+  App-scoped tasks are unaffected by either policy.
+
+The 2s delay is deliberate in both modes: navigator listener hooks register
+in the first commit, _after_ their screen children render, so an instant
+check would wrongly flag every correctly wired app during mount. Detection
+is re-evaluated live — any later navigation signal cancels the check,
+clears a degraded declaration, and resets the warning so a second unwired
+window warns again.
 
 ## Event buffering
 

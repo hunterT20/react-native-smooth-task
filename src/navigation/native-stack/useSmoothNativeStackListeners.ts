@@ -62,5 +62,13 @@ export function useSmoothNativeStackListeners(
 ): SmoothNativeStackListeners {
   const { coordinator } = useSmoothTask('useSmoothNativeStackListeners');
   useNavigatorRegistration(coordinator, 'native-stack', options?.id);
-  return useMemo(() => createNavigatorListeners(coordinator), [coordinator]);
+  const animationEnabled = options?.animationEnabled;
+  return useMemo(
+    () =>
+      createNavigatorListeners(
+        coordinator,
+        animationEnabled !== undefined ? { animationEnabled } : undefined
+      ),
+    [coordinator, animationEnabled]
+  );
 }

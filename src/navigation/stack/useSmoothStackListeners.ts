@@ -50,5 +50,13 @@ export function useSmoothStackListeners(
 ): SmoothStackListeners {
   const { coordinator } = useSmoothTask('useSmoothStackListeners');
   useNavigatorRegistration(coordinator, 'stack', options?.id);
-  return useMemo(() => createNavigatorListeners(coordinator), [coordinator]);
+  const animationEnabled = options?.animationEnabled;
+  return useMemo(
+    () =>
+      createNavigatorListeners(
+        coordinator,
+        animationEnabled !== undefined ? { animationEnabled } : undefined
+      ),
+    [coordinator, animationEnabled]
+  );
 }

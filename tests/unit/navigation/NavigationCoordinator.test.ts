@@ -4,15 +4,19 @@
  */
 
 import { createNavigationCoordinator } from '../../../src/navigation/NavigationCoordinator';
+import type { MissingAdapterPolicy } from '../../../src/navigation/types';
 import { FakeTimerHost, appTree, createRecordingSink, nav, route } from './helpers';
 
-function setup(deps?: { stallWarningMs?: number }) {
+function setup(deps?: { stallWarningMs?: number; missingAdapterPolicy?: MissingAdapterPolicy }) {
   const timers = new FakeTimerHost();
   const sink = createRecordingSink();
   const coordinator = createNavigationCoordinator({
     diagnostics: sink,
     timers,
     ...(deps?.stallWarningMs !== undefined ? { stallWarningMs: deps.stallWarningMs } : {}),
+    ...(deps?.missingAdapterPolicy !== undefined
+      ? { missingAdapterPolicy: deps.missingAdapterPolicy }
+      : {}),
   });
   return { coordinator, timers, sink };
 }
@@ -404,48 +408,96 @@ describe('transitionFinished with no open barrier', () => {
   });
 });
 
-describe('degraded standalone mode', () => {
-  it('declares missing-adapter after the detection window, then all scopes are eligible', () => {
-    const { coordinator, timers, sink } = setup();
-    // During the grace window the coordinator still gates (navigation may
-    // still be wiring).
-    expect(coordinator.isEligible('route:anything')).toBe(false);
+describe('missing-adapter policy', () => {
+  describe('strict (default) — fail closed', () => {
+    it('warns after the detection window but keeps route scopes gated', () => {
+      const { coordinator, timers, sink } = setup();
+      // During the grace window the coordinator still gates (navigation may
+      // still be wiring).
+      expect(coordinator.isEligible('route:anything')).toBe(false);
 
-    timers.advance(2000);
-    expect(sink.byCode('missing-adapter')).toHaveLength(1);
-    expect(sink.byCode('missing-adapter')[0]?.level).toBe('warn');
+      timers.advance(2000);
+      expect(sink.byCode('missing-adapter')).toHaveLength(1);
+      expect(sink.byCode('missing-adapter')[0]?.level).toBe('warn');
+      expect(sink.byCode('missing-adapter')[0]?.message).toContain('strict');
 
-    expect(coordinator.isEligible('route:anything')).toBe(true);
-    expect(coordinator.isEligible('app')).toBe(true);
-    expect(coordinator.isEligible('weird:scope')).toBe(true);
+      // Route scopes must NEVER ungate without navigation evidence — a
+      // miswired app fails closed instead of running work mid-transition.
+      expect(coordinator.isEligible('route:anything')).toBe(false);
+      expect(coordinator.isEligible('route:other')).toBe(false);
+      // App scope is never gated by navigation either way.
+      expect(coordinator.isEligible('app')).toBe(true);
+      expect(coordinator.isEligible('weird:scope')).toBe(true);
 
-    // warn is one-time even across repeated queries
-    coordinator.isEligible('route:other');
-    expect(sink.byCode('missing-adapter')).toHaveLength(1);
+      // warn is one-time even across repeated queries
+      expect(sink.byCode('missing-adapter')).toHaveLength(1);
+    });
+
+    it('does not re-warn or churn timers after firing once', () => {
+      const { coordinator, timers, sink } = setup();
+      coordinator.isEligible('route:x'); // arm
+      timers.advance(2000);
+      coordinator.isEligible('route:x');
+      timers.advance(10000);
+      coordinator.isEligible('route:x');
+      expect(sink.byCode('missing-adapter')).toHaveLength(1);
+    });
+
+    it('gates normally once navigation wires up, even after warning', () => {
+      const { coordinator, timers } = setup();
+      coordinator.isEligible('route:x');
+      timers.advance(2000);
+      expect(coordinator.isEligible('route:x')).toBe(false);
+
+      coordinator.registerNavigator({ instanceId: 'stack:root:1', kind: 'stack' });
+      expect(coordinator.isEligible('route:x')).toBe(false);
+      coordinator.setNavigationState(nav([route('x')], 0));
+      expect(coordinator.isEligible('route:x')).toBe(true);
+    });
   });
 
-  it('exits degraded mode as soon as navigation wires up', () => {
-    const { coordinator, timers } = setup();
-    coordinator.isEligible('route:x'); // arm the standalone check
-    timers.advance(2000);
-    expect(coordinator.isEligible('route:x')).toBe(true); // degraded
+  describe('degraded (opt-in) — fail open', () => {
+    it('declares missing-adapter after the detection window, then all scopes are eligible', () => {
+      const { coordinator, timers, sink } = setup({ missingAdapterPolicy: 'degraded' });
+      expect(coordinator.isEligible('route:anything')).toBe(false);
 
-    coordinator.registerNavigator({ instanceId: 'stack:root:1', kind: 'stack' });
-    expect(coordinator.isEligible('route:x')).toBe(false); // gated again
+      timers.advance(2000);
+      expect(sink.byCode('missing-adapter')).toHaveLength(1);
+      expect(sink.byCode('missing-adapter')[0]?.level).toBe('warn');
 
-    // …and once state arrives, normal rules apply.
-    coordinator.setNavigationState(nav([route('x')], 0));
-    expect(coordinator.isEligible('route:x')).toBe(true);
+      expect(coordinator.isEligible('route:anything')).toBe(true);
+      expect(coordinator.isEligible('app')).toBe(true);
+      expect(coordinator.isEligible('weird:scope')).toBe(true);
+
+      coordinator.isEligible('route:other');
+      expect(sink.byCode('missing-adapter')).toHaveLength(1);
+    });
+
+    it('exits degraded mode as soon as navigation wires up', () => {
+      const { coordinator, timers } = setup({ missingAdapterPolicy: 'degraded' });
+      coordinator.isEligible('route:x'); // arm the standalone check
+      timers.advance(2000);
+      expect(coordinator.isEligible('route:x')).toBe(true); // degraded
+
+      coordinator.registerNavigator({ instanceId: 'stack:root:1', kind: 'stack' });
+      expect(coordinator.isEligible('route:x')).toBe(false); // gated again
+
+      // …and once state arrives, normal rules apply.
+      coordinator.setNavigationState(nav([route('x')], 0));
+      expect(coordinator.isEligible('route:x')).toBe(true);
+    });
   });
 
-  it('a navigator registering during the window prevents degraded mode', () => {
-    const { coordinator, timers, sink } = setup();
-    coordinator.isEligible('route:x'); // arm check
-    timers.advance(1000);
-    coordinator.registerNavigator({ instanceId: 'i1', kind: 'stack' });
-    timers.advance(5000);
-    expect(sink.byCode('missing-adapter')).toHaveLength(0);
-    expect(coordinator.isEligible('route:x')).toBe(false);
+  it('a navigator registering during the window prevents any missing-adapter signal', () => {
+    for (const missingAdapterPolicy of ['strict', 'degraded'] as const) {
+      const { coordinator, timers, sink } = setup({ missingAdapterPolicy });
+      coordinator.isEligible('route:x'); // arm check
+      timers.advance(1000);
+      coordinator.registerNavigator({ instanceId: 'i1', kind: 'stack' });
+      timers.advance(5000);
+      expect(sink.byCode('missing-adapter')).toHaveLength(0);
+      expect(coordinator.isEligible('route:x')).toBe(false);
+    }
   });
 });
 

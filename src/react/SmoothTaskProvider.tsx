@@ -66,12 +66,16 @@ export function SmoothTaskProvider({
   children,
   diagnostics: diagnosticsProp,
   pauseInBackground,
+  missingAdapterPolicy,
 }: SmoothTaskProviderProps): ReactElement {
   // Created exactly once — the scheduler/coordinator pair must be stable for
   // the lifetime of the provider (lazy state initializer runs once).
   const [value] = useState<SmoothTaskContextValue>(() => {
     const diagnostics = createDiagnosticsChannel(resolveDiagnosticsSink(diagnosticsProp));
-    const coordinator = createNavigationCoordinator({ diagnostics });
+    const coordinator = createNavigationCoordinator({
+      diagnostics,
+      ...(missingAdapterPolicy !== undefined ? { missingAdapterPolicy } : {}),
+    });
     const scheduler = createTaskScheduler({
       gate: coordinator,
       idleHost: createDefaultIdleHost(),

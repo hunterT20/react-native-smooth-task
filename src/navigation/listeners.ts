@@ -30,20 +30,43 @@ export interface NavigatorListeners {
   blur(e?: NavigatorListenerEvent): void;
 }
 
-export function createNavigatorListeners(coordinator: NavigationCoordinator): NavigatorListeners {
+export interface NavigatorListenersOptions {
+  /**
+   * When false, transition events are ignored entirely — no barriers are
+   * opened and no recovery is awaited. Use for navigators whose screens
+   * disable animation (JS stack `animationEnabled: false`, native-stack
+   * `animation: 'none'`). Ignoring gestureCancel here is REQUIRED: a
+   * forwarded cancel would open a barrier waiting on a `transitionEnd`
+   * the platform may never emit for non-animated screens.
+   */
+  animationEnabled?: boolean;
+}
+
+export function createNavigatorListeners(
+  coordinator: NavigationCoordinator,
+  options?: NavigatorListenersOptions
+): NavigatorListeners {
+  const forwardTransitions = options?.animationEnabled !== false;
+  const noop = () => undefined;
   return {
     transitionStart(e) {
       const target = e?.target;
-      if (typeof target === 'string') coordinator.transitionStarted(target);
+      if (forwardTransitions && typeof target === 'string') {
+        coordinator.transitionStarted(target);
+      }
     },
     transitionEnd(e) {
       const target = e?.target;
-      if (typeof target === 'string') coordinator.transitionFinished(target);
+      if (forwardTransitions && typeof target === 'string') {
+        coordinator.transitionFinished(target);
+      }
     },
-    gestureCancel(e) {
-      const target = e?.target;
-      if (typeof target === 'string') coordinator.gestureCancelled(target);
-    },
+    gestureCancel: forwardTransitions
+      ? (e) => {
+          const target = e?.target;
+          if (typeof target === 'string') coordinator.gestureCancelled(target);
+        }
+      : noop,
     focus(e) {
       const target = e?.target;
       if (typeof target === 'string') coordinator.routeFocused(target);

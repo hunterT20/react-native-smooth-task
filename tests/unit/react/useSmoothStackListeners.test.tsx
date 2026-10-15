@@ -132,6 +132,29 @@ describe('useSmoothStackListeners', () => {
     expect(result.current.listeners).toBe(first);
   });
 
+  it('animationEnabled:false ignores all transition events — no barrier ever opens', async () => {
+    const { result } = await renderHook(
+      () => ({
+        ctx: useSmoothTask(),
+        listeners: useSmoothStackListeners({ animationEnabled: false }),
+      }),
+      { wrapper }
+    );
+    const coordinator = result.current.ctx.coordinator;
+    await act(() => coordinator.setNavigationState(twoRouteState(0)));
+    const l = result.current.listeners;
+    await act(() => l.transitionStart({ target: 'route-a' }));
+    // gestureCancel must also be ignored — forwarding it would open a
+    // barrier awaiting a transitionEnd that may never come.
+    await act(() => l.gestureCancel({ target: 'route-a' }));
+    expect(coordinator.getRouteStatus('route-a').hasPendingTransition).toBe(false);
+    expect(coordinator.getRouteStatus('route-a').settled).toBe(true);
+    // focus/blur still forward (diagnostic hints).
+    const focused = jest.spyOn(coordinator, 'routeFocused');
+    await act(() => l.focus({ target: 'route-a' }));
+    expect(focused).toHaveBeenCalledWith('route-a');
+  });
+
   it('keeps working while pump flushes scheduled tasks alongside', async () => {
     const { result } = await renderHook(() => useBoth(), { wrapper });
     const coordinator = result.current.ctx.coordinator;
