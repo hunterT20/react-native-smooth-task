@@ -102,6 +102,11 @@ far only via hand-simulated state trees and events:
 - **Real gesture animations.** Interactive swipe-back timing, partial
   gestures, gesture-cancel → recovery `transitionEnd` delivery — simulated in
   T04/T05 but not against real drivers.
+- **Native-stack event fidelity.** `useSmoothNativeStackListeners`
+  forwarding is unit-tested with fabricated events, but native-stack
+  transition events are emitted by react-native-screens on the native side —
+  timing/order on real devices (iOS vs Android, `gestureCancel` iOS-only)
+  needs on-device confirmation.
 - **Frame metrics.** Jest cannot measure dropped frames, long tasks or p95
   transition times — covered by the benchmark plan below.
 

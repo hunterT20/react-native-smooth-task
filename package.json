@@ -28,12 +28,18 @@
       "react-native": "./src/stack.ts",
       "default": "./lib/commonjs/stack.js"
     },
+    "./native-stack": {
+      "types": "./lib/typescript/native-stack.d.ts",
+      "react-native": "./src/native-stack.ts",
+      "default": "./lib/commonjs/native-stack.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "src",
     "lib",
     "stack",
+    "native-stack",
     "README.md",
     "CHANGELOG.md",
     "!**/__tests__",
@@ -52,12 +58,16 @@
   },
   "peerDependencies": {
     "@react-navigation/native": ">=7.0.0 <8",
+    "@react-navigation/native-stack": ">=7.0.0 <8",
     "@react-navigation/stack": ">=7.0.0 <8",
     "react": ">=19.1.1 <20",
     "react-native": ">=0.82.0 <1"
   },
   "peerDependenciesMeta": {
     "@react-navigation/native": {
+      "optional": true
+    },
+    "@react-navigation/native-stack": {
       "optional": true
     },
     "@react-navigation/stack": {
@@ -69,6 +79,7 @@
     "@react-native/babel-preset": "0.87.1",
     "@react-native/jest-preset": "0.87.1",
     "@react-navigation/native": "7.5.1",
+    "@react-navigation/native-stack": "7.21.0",
     "@react-navigation/stack": "7.12.1",
     "@testing-library/react-native": "14.1.0",
     "@types/jest": "30.0.0",

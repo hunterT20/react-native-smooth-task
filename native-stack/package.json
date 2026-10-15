@@ -1,0 +1,8 @@
+{
+  "name": "react-native-smooth-task-native-stack-shim",
+  "private": true,
+  "main": "../lib/commonjs/native-stack.js",
+  "module": "../lib/module/native-stack.js",
+  "react-native": "../src/native-stack.ts",
+  "types": "../lib/typescript/native-stack.d.ts"
+}

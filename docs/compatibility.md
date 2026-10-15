@@ -9,17 +9,18 @@ pending** — see the notes at the bottom.
 
 ## Verified matrix (dev baseline)
 
-| Package                       | Version | Role                                             |
-| ----------------------------- | ------- | ------------------------------------------------ |
-| react-native                  | 0.87.1  | host app                                         |
-| react                         | 19.3.1  | peer                                             |
-| @react-navigation/native      | 7.5.1   | optional peer (`/stack` only)                    |
-| @react-navigation/stack       | 7.12.1  | optional peer (`/stack` only)                    |
-| typescript                    | 5.9.3   | toolchain                                        |
-| jest                          | 30.5.2  | test runner                                      |
-| @react-native/jest-preset     | 0.87.1  | jest preset                                      |
-| @testing-library/react-native | 14.1.0  | React tests                                      |
-| test-renderer                 | 1.3.1   | RNTL 14 renderer — **not** `react-test-renderer` |
+| Package                        | Version | Role                                             |
+| ------------------------------ | ------- | ------------------------------------------------ |
+| react-native                   | 0.87.1  | host app                                         |
+| react                          | 19.3.1  | peer                                             |
+| @react-navigation/native       | 7.5.1   | optional peer (`/stack` + `/native-stack`)       |
+| @react-navigation/stack        | 7.12.1  | optional peer (`/stack` only)                    |
+| @react-navigation/native-stack | 7.21.0  | optional peer (`/native-stack` only)             |
+| typescript                     | 5.9.3   | toolchain                                        |
+| jest                           | 30.5.2  | test runner                                      |
+| @react-native/jest-preset      | 0.87.1  | jest preset                                      |
+| @testing-library/react-native  | 14.1.0  | React tests                                      |
+| test-renderer                  | 1.3.1   | RNTL 14 renderer — **not** `react-test-renderer` |
 
 Supporting libs present in the dev environment (needed by a real host app /
 the example, not by the library itself): `react-native-screens` 4.30.0,
@@ -30,12 +31,14 @@ the example, not by the library itself): `react-native-screens` 4.30.0,
 ```json
 "peerDependencies": {
   "@react-navigation/native": ">=7.0.0 <8",
+  "@react-navigation/native-stack": ">=7.0.0 <8",
   "@react-navigation/stack": ">=7.0.0 <8",
   "react": ">=19.1.1 <20",
   "react-native": ">=0.82.0 <1"
 },
 "peerDependenciesMeta": {
   "@react-navigation/native": { "optional": true },
+  "@react-navigation/native-stack": { "optional": true },
   "@react-navigation/stack": { "optional": true }
 }
 ```
@@ -44,8 +47,9 @@ the example, not by the library itself): `react-native-screens` 4.30.0,
   on `react` + `react-native`. It is fully usable without navigation —
   hooks run in the `app` scope.
 - The `@react-navigation/*` peers are optional; they are only imported by the
-  `/stack` entry (`useSmoothStackListeners`, route-scoped hooks). Install them
-  only if you import `react-native-smooth-task/stack`.
+  `/stack` and `/native-stack` entries. Install `native` + `stack` only if
+  you import `react-native-smooth-task/stack`, and `native` + `native-stack`
+  only for `react-native-smooth-task/native-stack`.
 - `react-native-screens` / `safe-area-context` / `gesture-handler` are
   **not** peers of this library — they are requirements of
   React Navigation stacks themselves.
@@ -58,6 +62,7 @@ Per-layer requirement surface:
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------ |
 | Root hooks / `app` scope            | react ≥19.1.1, RN ≥0.82 (`AppState`, `AbortController`, `setTimeout`; `requestIdleCallback` optional — falls back to `setTimeout(0)`)                                | RN 0.87.1 + react 19.3.1                                       | RN 0.88 RC                  | —                                                            |
 | `/stack` route scopes               | `useRoute().key` (navigation ≥7), `screenListeners` event map with `transitionStart`/`transitionEnd`/`gestureCancel`/`focus`/`blur` and string `e.target` route keys | Navigation 7.5.1 / stack 7.12.1                                | Navigation 7.x latest minor | Navigation 8 (peer range excludes it — pending verification) |
+| `/native-stack` route scopes        | Same event-map surface; events are native-driven via react-native-screens (`gestureCancel` iOS-only)                                                                 | Navigation 7.5.1 / native-stack 7.21.0 (adapter-level tests)   | Navigation 7.x latest minor | Navigation 8; real-device event fidelity pending             |
 | Container wiring                    | `NavigationContainer` `onReady` + `onStateChange(state)`, `getRootState()` on the container ref                                                                      | Navigation 7.5.1                                               | —                           | Navigation 8                                                 |
 | Non-stack navigators (tabs/drawers) | Nothing — focus comes from `index` in the state tree                                                                                                                 | any navigator that reports a `NavigationTreeState`-shaped tree | —                           | —                                                            |
 

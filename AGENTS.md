@@ -15,13 +15,13 @@ pnpm format        # prettier
 
 ## Layer purity rules — strictly enforced
 
-| Layer | May import |
-|---|---|
-| `src/core/` | Only `src/types.ts`, `src/diagnostics/` — **no react, no react-native, no @react-navigation** |
-| `src/navigation/` | Same as core (+ `src/core/`). Pure TS, fully unit-testable without RN. |
-| `src/diagnostics/` | Nothing outside itself + `src/types.ts` |
-| `src/react/` | react, react-native, and all src layers |
-| `src/navigation/stack/` + `src/stack.ts` | + `@react-navigation/*` (optional peers — ONLY here) |
+| Layer                                                                                          | May import                                                                                    |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `src/core/`                                                                                    | Only `src/types.ts`, `src/diagnostics/` — **no react, no react-native, no @react-navigation** |
+| `src/navigation/`                                                                              | Same as core (+ `src/core/`). Pure TS, fully unit-testable without RN.                        |
+| `src/diagnostics/`                                                                             | Nothing outside itself + `src/types.ts`                                                       |
+| `src/react/`                                                                                   | react, react-native, and all src layers                                                       |
+| `src/navigation/stack/`, `src/navigation/native-stack/`, `src/stack.ts`, `src/native-stack.ts` | + `@react-navigation/*` (optional peers — ONLY here)                                          |
 
 ## Locked contracts — do not modify
 

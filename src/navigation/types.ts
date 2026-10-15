@@ -23,7 +23,7 @@ export interface NavigationTreeState {
   routes: NavigationRouteState[];
 }
 
-export type NavigatorKind = 'stack' | 'tab' | 'unknown';
+export type NavigatorKind = 'stack' | 'native-stack' | 'tab' | 'unknown';
 
 export interface NavigatorRegistration {
   /** Unique per mounted navigator hook instance (never reused). */

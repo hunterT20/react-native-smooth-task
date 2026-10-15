@@ -59,16 +59,18 @@ task only while its owning route is **settled**:
 
 ## Requirements
 
-| Dependency                 | Version        | Required?                   |
-| -------------------------- | -------------- | --------------------------- |
-| `react`                    | `>=19.1.1 <20` | yes                         |
-| `react-native`             | `>=0.82 <1`    | yes                         |
-| `@react-navigation/native` | `>=7.0.0 <8`   | only for the `/stack` entry |
-| `@react-navigation/stack`  | `>=7.0.0 <8`   | only for the `/stack` entry |
+| Dependency                       | Version        | Required?                                       |
+| -------------------------------- | -------------- | ----------------------------------------------- |
+| `react`                          | `>=19.1.1 <20` | yes                                             |
+| `react-native`                   | `>=0.82 <1`    | yes                                             |
+| `@react-navigation/native`       | `>=7.0.0 <8`   | only for the `/stack` · `/native-stack` entries |
+| `@react-navigation/stack`        | `>=7.0.0 <8`   | only for the `/stack` entry                     |
+| `@react-navigation/native-stack` | `>=7.0.0 <8`   | only for the `/native-stack` entry              |
 
 > **Note** — the `@react-navigation/*` peers are _optional_. The root entry
 > runs fully standalone (see [Using it without navigation](#using-it-without-navigation)).
-> Only code imported from `react-native-smooth-task/stack` touches them.
+> Only code imported from `react-native-smooth-task/stack` or
+> `react-native-smooth-task/native-stack` touches them.
 
 Verified on RN `0.87.1` + React Navigation `7.5.x` / Stack `7.12.x`. See
 [docs/compatibility.md](docs/compatibility.md) for the full support matrix
@@ -149,9 +151,8 @@ const observers = useSmoothNavigationContainer({
 
 ### Step 3 · Attach listeners to each stack navigator
 
-For every `createStackNavigator` that animates screens — **including nested
-ones** — call `useSmoothStackListeners` and pass the result to
-`screenListeners`:
+Both stack navigators are supported — pick the listener hook matching the
+navigator type. For `createStackNavigator` (JS stack):
 
 ```tsx
 import { createStackNavigator } from '@react-navigation/stack';
@@ -170,6 +171,37 @@ function HomeStackScreen() {
 }
 ```
 
+For `createNativeStackNavigator` (react-native-screens stack):
+
+```tsx
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useSmoothNativeStackListeners } from 'react-native-smooth-task/native-stack';
+
+const OrdersStack = createNativeStackNavigator();
+
+function OrdersStackScreen() {
+  const listeners = useSmoothNativeStackListeners({ id: 'orders' });
+  return (
+    <OrdersStack.Navigator screenListeners={listeners}>
+      <OrdersStack.Screen name="List" component={OrderListScreen} />
+      <OrdersStack.Screen name="Detail" component={OrderDetailScreen} />
+    </OrdersStack.Navigator>
+  );
+}
+```
+
+Attach a listener to **every** stack navigator that animates screens —
+**including nested ones** — and you can freely mix both navigator types in
+one app (e.g. native stack for most screens, JS stack where you need custom
+animations).
+
+> **Native-stack event notes.** Its events are driven by the native side
+> (react-native-screens): `gestureCancel` is iOS-only (Android never emits
+> it, which is harmless), and `transitionStart`/`transitionEnd` correlate
+> with the native transition rather than a JS animation clock. If a screen
+> uses `animation: 'none'` and a `transitionEnd` never arrives, the barrier
+> stays open and a `stalled-transition` diagnostic warns after ~4s.
+
 > **Do I need this on tabs / drawers / custom navigators?** No. Focus for
 > non-stack navigators is derived from the state tree automatically — only
 > stack transitions emit events that need listening to. Missing listeners on
@@ -186,7 +218,7 @@ SmoothTaskProvider
         └── RootStack        // screenListeners={useSmoothStackListeners({id:'root'})}
             ├── MainTabs     // tabs — no listeners needed
             │   ├── HomeStackScreen   // useSmoothStackListeners({id:'home'})
-            │   └── OrdersStackScreen // useSmoothStackListeners({id:'orders'})
+            │   └── OrdersStackScreen // useSmoothNativeStackListeners({id:'orders'})
             └── Settings
 ```
 
@@ -208,8 +240,10 @@ Two flavors of each exist — **pick the import path deliberately**:
 import { useDeferredMount } from 'react-native-smooth-task';
 
 // Route scope — gated by the current route's settled status.
-// Requires React Navigation + the setup steps above.
+// Requires React Navigation + the setup steps above. Both entries export
+// the same route-scoped hooks — pick the one matching your navigator.
 import { useDeferredMount } from 'react-native-smooth-task/stack';
+// …or: 'react-native-smooth-task/native-stack'
 ```
 
 ## Usage
@@ -403,8 +437,8 @@ Full catalog: [docs/api.md — Diagnostic codes](docs/api.md#diagnostic-codes).
 | Nothing runs and you see `missing-nav-ref` warning  | `onReady` had no way to read initial state                                                                | Pass `navigationRef` (or `getRootState`) to `useSmoothNavigationContainer`                       |
 | `missing-adapter` warning + everything runs ungated | No nav state or listener registration reached the coordinator for ~2s                                     | Complete setup steps 2–3                                                                         |
 | `must be used within <SmoothTaskProvider>` throw    | Hook called above/outside the provider (incl. `useSmoothNavigationContainer` next to the provider itself) | Move container wiring into a child component                                                     |
-| `useRoute()`-related error outside a screen         | Route-scoped (`/stack`) hooks used in a component that isn't inside a route                               | Render inside a screen, or use the app-scope version from the root entry                         |
-| `every-focus` fires only once                       | Used from the root entry — `app` scope has no focus epochs                                                | Import the route-scoped version from `react-native-smooth-task/stack`                            |
+| `useRoute()`-related error outside a screen         | Route-scoped (`/stack` or `/native-stack`) hooks used outside a route                                     | Render inside a screen, or use the app-scope version from the root entry                         |
+| `every-focus` fires only once                       | Used from the root entry — `app` scope has no focus epochs                                                | Import the route-scoped version from `/stack` or `/native-stack`                                 |
 | Task "ran during the animation"                     | That screen's navigator has no listeners attached, or route was already settled                           | Attach `useSmoothStackListeners` to the owning stack                                             |
 | Screens with `animation: 'none'`                    | Stack still emits transition events; task runs right after `transitionEnd`                                | No action needed — if a `transitionEnd` never arrives, `stalled-transition` warns after ~4s      |
 
@@ -419,9 +453,14 @@ useIdleTask(): (cb, { key?, priority? }) => TaskHandle
 <DeferredView fallback? scheduling?>…</DeferredView>
 useSmoothNavigationContainer({ navigationRef?, getRootState?, onReady?, onStateChange? })
 
-// react-native-smooth-task/stack — route scope
+// react-native-smooth-task/stack — route scope (JS stack)
 useSmoothStackListeners({ id? }): ScreenListeners   // → screenListeners prop
-useDeferredMount / useAfterTransition / useIdleTask / DeferredView  // same APIs, route-bound
+
+// react-native-smooth-task/native-stack — route scope (native stack)
+useSmoothNativeStackListeners({ id? }): ScreenListeners
+
+// both adapter entries also export, route-bound:
+useDeferredMount / useAfterTransition / useIdleTask / DeferredView
 ```
 
 Defaults: `useDeferredMount` → `scheduling: 'transition'` (user-visible);
@@ -439,9 +478,12 @@ validated combinations are tracked in
 [docs/compatibility.md](docs/compatibility.md). RN 0.88 RC and Navigation 8
 are forward-compat targets under a separate test matrix — not release blockers.
 
-The adapter is built and tested for `@react-navigation/stack` (the JS stack).
-`@react-navigation/native-stack` support is a separate adapter on the
-roadmap — its transition events have different fidelity.
+Adapters exist for both `@react-navigation/stack` (JS stack) and
+`@react-navigation/native-stack` ≥7. Native-stack event fidelity is driven
+by react-native-screens on the native side — adapter forwarding and gating
+are unit-tested, but real-device gesture/transition timing for native-stack
+is pending device validation (tracked in
+[docs/testing.md](docs/testing.md)).
 
 ## Docs
 

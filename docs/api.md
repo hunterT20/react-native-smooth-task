@@ -1,11 +1,12 @@
 # API reference
 
-`react-native-smooth-task` ships two entry points:
+`react-native-smooth-task` ships three entry points:
 
-| Entry point                      | Scope                                                                                                     | Navigation required?                                         |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `react-native-smooth-task`       | `app` scope — always eligible while the app runs; never gated by navigation state or AppState             | No                                                           |
-| `react-native-smooth-task/stack` | `route:<key>` scope of the current route (`useRoute().key`) — tasks run only while the route is _settled_ | Yes — `@react-navigation/native` + `@react-navigation/stack` |
+| Entry point                             | Scope                                                                                                     | Navigation required?                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `react-native-smooth-task`              | `app` scope — always eligible while the app runs; never gated by navigation state or AppState             | No                                                                  |
+| `react-native-smooth-task/stack`        | `route:<key>` scope of the current route (`useRoute().key`) — tasks run only while the route is _settled_ | Yes — `@react-navigation/native` + `@react-navigation/stack`        |
+| `react-native-smooth-task/native-stack` | Same as `/stack`                                                                                          | Yes — `@react-navigation/native` + `@react-navigation/native-stack` |
 
 A route is **settled** when all of the following hold:
 
@@ -302,6 +303,46 @@ Also re-exported from `/stack`: `SmoothStackListeners`, `StackListenerEvent`,
 `StackLifecycleEvent`, `SmoothStackListenersOptions`, `DeferredViewProps`,
 `DeferredMountOptions`, `AfterTransitionOptions`, `IdleTaskOptions`,
 `TaskHandle`, `TaskCallback`.
+
+### `useSmoothNativeStackListeners` (`/native-stack` entry)
+
+```ts
+function useSmoothNativeStackListeners(
+  options?: SmoothStackListenersOptions
+): SmoothNativeStackListeners;
+
+interface SmoothNativeStackListeners {
+  transitionStart(e?: NativeStackListenerEvent<'transitionStart'>): void;
+  transitionEnd(e?: NativeStackListenerEvent<'transitionEnd'>): void;
+  gestureCancel(e?: NativeStackListenerEvent<'gestureCancel'>): void;
+  focus(e?: NativeStackLifecycleEvent): void;
+  blur(e?: NativeStackLifecycleEvent): void;
+}
+```
+
+Same contract as `useSmoothStackListeners`, for
+`createNativeStackNavigator`. Call once per navigator and pass to
+`screenListeners`. Registration ids use the `native-stack:` prefix.
+
+Native-stack differences to be aware of:
+
+- Events are driven by the native side via react-native-screens —
+  `transitionStart`/`transitionEnd` carry a `data.closing` flag and
+  correlate with the real native transition rather than a JS animation.
+- `gestureCancel` is emitted on iOS only (swipe-back cancel); Android
+  never fires it — the mapping is harmless there.
+- Screens with `animation: 'none'` may emit both events in one frame, or
+  skip `transitionEnd` on some react-native-screens versions — the barrier
+  then stays open and a `stalled-transition` diagnostic warns after ~4s.
+- Real-device event fidelity for native-stack is pending device validation;
+  adapter forwarding and gating are covered by unit tests.
+
+The `/native-stack` entry also exports `useDeferredMount`,
+`useAfterTransition`, `useIdleTask`, `DeferredView` (identical
+implementations to `/stack`), plus `SmoothNativeStackListeners`,
+`NativeStackListenerEvent`, `NativeStackLifecycleEvent`,
+`SmoothStackListenersOptions`, `DeferredViewProps`, `DeferredMountOptions`,
+`AfterTransitionOptions`, `IdleTaskOptions`, `TaskHandle`, `TaskCallback`.
 
 ---
 

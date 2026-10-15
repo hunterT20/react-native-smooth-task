@@ -11,7 +11,8 @@ scheduling and eligibility logic is fully unit-testable without a RN runtime.
 │ Public React APIs (src/react/)                               │
 │  SmoothTaskProvider · useDeferredMount · useAfterTransition  │
 │  useIdleTask · DeferredView · useSmoothNavigationContainer   │
-│  + route-scoped variants bound via useRoute().key (/stack)   │
+│  + route-scoped variants bound via useRoute().key            │
+│    (exported from both /stack and /native-stack)             │
 ├──────────────────────────────────────────────────────────────┤
 │ Navigation Coordinator (src/navigation/)                     │
 │  NavigationCoordinator · RouteRegistry · BarrierRegistry     │
@@ -26,12 +27,18 @@ scheduling and eligibility logic is fully unit-testable without a RN runtime.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The only navigation-adapter code that touches `@react-navigation` is
-`src/navigation/stack/useSmoothStackListeners.ts` (and the route-scoped hooks
-under `src/react/routeScoped/`, which only call `useRoute()`). The coordinator
-itself speaks structural types (`NavigationTreeState` = `{ index?, routes:
-{ key, name, state? }[] }`), so real `NavigationState` objects flow through
-without a hard dependency, and other navigator kinds can be adapted later.
+The only navigation-adapter code that touches `@react-navigation` lives in
+`src/navigation/stack/useSmoothStackListeners.ts` and
+`src/navigation/native-stack/useSmoothNativeStackListeners.ts` (plus the
+route-scoped hooks under `src/react/routeScoped/`, which only call
+`useRoute()`). Both adapters share one implementation —
+`src/navigation/listeners.ts` builds the plain listener map and
+`src/react/useNavigatorRegistration.ts` handles register/unregister — so
+each adapter is a thin typed wrapper that labels the registration
+(`stack:` vs `native-stack:`). The coordinator itself speaks structural
+types (`NavigationTreeState` = `{ index?, routes: { key, name, state? }[] }`),
+so real `NavigationState` objects flow through without a hard dependency,
+and other navigator kinds can be adapted later.
 
 ## Runtime coordination
 
@@ -41,10 +48,13 @@ Two input streams feed the coordinator:
    (resolving the initial tree via `getRootState()` /
    `navigationRef.current.getRootState()`) and `onStateChange` onto
    `NavigationContainer`. Each delivery rebuilds the route table.
-2. **Transition events** — `useSmoothStackListeners` plugs into each stack
-   navigator's `screenListeners` and forwards `transitionStart`,
-   `transitionEnd`, `gestureCancel`, `focus` and `blur` (keyed by
-   `e.target`, the route key that fired the event).
+2. **Transition events** — `useSmoothStackListeners` /
+   `useSmoothNativeStackListeners` plug into each stack navigator's
+   `screenListeners` and forward `transitionStart`, `transitionEnd`,
+   `gestureCancel`, `focus` and `blur` (keyed by `e.target`, the route key
+   that fired the event). On native-stack these events are native-driven
+   (`gestureCancel` is iOS-only); the coordinator treats both adapters
+   identically.
 
 The scheduler subscribes to the coordinator's broadcast channel. Every state
 delivery, barrier change, navigator registration and AppState change triggers
