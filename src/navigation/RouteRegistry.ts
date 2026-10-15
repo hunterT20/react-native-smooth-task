@@ -52,7 +52,22 @@ export interface RebuildResult {
   readonly deadNavNodeIds: readonly string[];
   /** Route keys whose `focusedOnPath` went false → true in this rebuild. */
   readonly focusGainedKeys: readonly string[];
+  /**
+   * navNodeIds whose `index`-selected member changed since the previous
+   * rebuild (push/pop/switch — the state-level signal that a transition is
+   * probably about to animate). Brand-new navNodes are excluded: their
+   * mount is covered by the ancestor change that introduced them.
+   */
+  readonly focusChangedNavNodeIds: readonly string[];
 }
+
+/**
+ * Tombstones exist solely to resolve late `transitionStarted` events for a
+ * just-popped route — events that old never arrive in practice, so a small
+ * FIFO bound is plenty. Without it, every pop on a still-alive navigator
+ * (the root stack effectively lives forever) accumulates a dead key.
+ */
+const MAX_TOMBSTONES = 64;
 
 /** The route a level's `index` selects — last route when `index` is absent. */
 function focusedKeyOf(level: NavigationTreeState): string | undefined {
@@ -75,8 +90,13 @@ export class RouteRegistry {
   private readonly focusEpochs = new Map<string, number>();
   /** routeKey → previous focusedOnPath (false when absent). */
   private readonly prevFocusedOnPath = new Map<string, boolean>();
-  /** routeKeys that appeared in at least one delivered state. Append-only. */
+  /**
+   * routeKeys currently in the latest state or tombstoned. Pruned on every
+   * rebuild so long-dead route keys do not accumulate.
+   */
   private readonly seenRouteKeys = new Set<string>();
+  /** navNodeId → the route key `index` selected at the previous rebuild. */
+  private prevSelectedMember = new Map<string, string | undefined>();
 
   /**
    * Rebuild the route table from `state`.
@@ -86,6 +106,8 @@ export class RouteRegistry {
   rebuild(state: NavigationTreeState, openBarrierNavNodeIds: ReadonlySet<string>): RebuildResult {
     const routes = new Map<string, IndexedRoute>();
     const members = new Map<string, Set<string>>();
+    /** navNodeId → the member `index` selects this rebuild. */
+    const selectedMembers = new Map<string, string | undefined>();
 
     const visit = (
       level: NavigationTreeState,
@@ -95,6 +117,7 @@ export class RouteRegistry {
     ): void => {
       this.knownNavNodeIds.add(navNodeId);
       const focusedKey = focusedKeyOf(level);
+      selectedMembers.set(navNodeId, focusedKey);
       const pathToLevel = [...ancestorNavNodeIds, navNodeId];
       for (const route of level.routes) {
         const focusedOnPath = parentFocused && route.key === focusedKey;
@@ -134,11 +157,31 @@ export class RouteRegistry {
         this.prevFocusedOnPath.delete(routeKey);
       }
     };
+    // Older tombstones first, freshly-popped routes last — Map insertion
+    // order then runs oldest → newest for the FIFO bound below.
+    for (const [routeKey, navNodeId] of this.tombstones) {
+      retainOrDrop(routeKey, navNodeId);
+    }
     for (const [routeKey, record] of this.routes) {
       retainOrDrop(routeKey, record.navNodeId);
     }
-    for (const [routeKey, navNodeId] of this.tombstones) {
-      retainOrDrop(routeKey, navNodeId);
+
+    // Bound tombstones: only recent pops ever receive late events. Map
+    // insertion order is preserved across rebuilds, so the iterator head
+    // is the oldest retained tombstone.
+    while (tombstones.size > MAX_TOMBSTONES) {
+      const oldest = tombstones.keys().next().value;
+      if (oldest === undefined) break;
+      tombstones.delete(oldest);
+      this.focusEpochs.delete(oldest);
+      this.prevFocusedOnPath.delete(oldest);
+      this.seenRouteKeys.delete(oldest);
+    }
+
+    // Keep `seenRouteKeys` proportional to live + retained state — it backs
+    // only the untracked-route warning, not correctness.
+    for (const key of [...this.seenRouteKeys]) {
+      if (!routes.has(key) && !tombstones.has(key)) this.seenRouteKeys.delete(key);
     }
 
     // NavNodes with zero members in the latest state are dead — the
@@ -150,6 +193,21 @@ export class RouteRegistry {
         deadNavNodeIds.push(navNodeId);
       }
     }
+
+    // navNodes whose selected member changed = probable animation sources.
+    // Only navNodes that existed before qualify (prevSelectedMember has an
+    // entry); a navNode appearing for the first time is covered by the
+    // ancestor change that mounted it.
+    const focusChangedNavNodeIds: string[] = [];
+    for (const [navNodeId, selected] of selectedMembers) {
+      if (
+        this.prevSelectedMember.has(navNodeId) &&
+        this.prevSelectedMember.get(navNodeId) !== selected
+      ) {
+        focusChangedNavNodeIds.push(navNodeId);
+      }
+    }
+    this.prevSelectedMember = selectedMembers;
 
     // focusEpoch edges: +1 when focusedOnPath goes false → true. Routes not
     // present in this state count as unfocused (a reappearing key that is
@@ -174,7 +232,7 @@ export class RouteRegistry {
     this.navNodeMembers = readonlyMembers;
     this.tombstones = tombstones;
 
-    return { deadNavNodeIds, focusGainedKeys };
+    return { deadNavNodeIds, focusGainedKeys, focusChangedNavNodeIds };
   }
 
   /** Route record for a key in the latest state, or undefined. */

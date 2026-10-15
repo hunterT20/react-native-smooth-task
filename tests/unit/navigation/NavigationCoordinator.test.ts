@@ -591,6 +591,103 @@ describe('dispose', () => {
   });
 });
 
+describe('settling — the state→event ordering gap', () => {
+  it('holds a freshly-focused route until transition events arrive (pop race)', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 })); // post focused
+    // A wired navigator emits focus on mount — 'tab-home' is now observed.
+    coordinator.routeFocused('home-post');
+
+    // Pop: React Navigation delivers the state BEFORE transition events.
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    // Without settling, 'home-feed' would release tasks here — mid-gap.
+    expect(coordinator.getRouteStatus('home-feed').hasPendingTransition).toBe(true);
+    expect(coordinator.getRouteStatus('home-feed').settled).toBe(false);
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+
+    // The late transitionStarted resolves via tombstone and takes over.
+    coordinator.transitionStarted('home-post');
+    expect(coordinator.getRouteStatus('home-feed').settled).toBe(false);
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.getRouteStatus('home-feed').settled).toBe(true);
+  });
+
+  it('navNodes that never emitted events keep focus-only gating', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree());
+    // No lifecycle events ever reached this navNode — it is treated as
+    // unwired and a focus change settles immediately (no regression for
+    // un-instrumented subtrees like tab bars).
+    coordinator.setNavigationState(appTree({ tabIndex: 1 }));
+    expect(coordinator.isEligible('route:orders-list')).toBe(true);
+  });
+
+  it('silence timeout releases settling and classifies the navNode non-animated', () => {
+    const { coordinator, timers } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post');
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    timers.advance(300);
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+
+    // Learned non-animated: the next focus change does not wait again.
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+  });
+
+  it('a later transition event re-classifies the navNode as animated', () => {
+    const { coordinator, timers } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post');
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    timers.advance(300); // elapsed → classified non-animated
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+
+    // This navNode DID animate after all — the misclassification heals.
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-feed');
+
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(false); // settling
+    coordinator.transitionStarted('home-post');
+    expect(coordinator.isEligible('route:home-post')).toBe(false); // barrier
+    coordinator.transitionFinished('home-post');
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+  });
+
+  it('skips marking while a barrier already covers the navNode', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.transitionStarted('home-post'); // barrier on 'tab-home'
+    // A focus change arriving mid-transition is covered by the barrier —
+    // settling must not outlive it.
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+  });
+});
+
+describe('overlapping transitions (documented single-barrier semantics)', () => {
+  it('the first transitionFinished releases the navNode barrier', () => {
+    const { coordinator, sink } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.transitionStarted('home-post');
+    // A second transition starts while the barrier is open — ignored by
+    // design, and surfaced via the barrier-already-open diagnostic.
+    coordinator.transitionStarted('home-feed');
+    expect(sink.byCode('barrier-already-open')).toHaveLength(1);
+    // Current contract: a navNode has at most one barrier; the first
+    // transitionFinished closes it even if another transition might still
+    // be running. Revisit with device evidence before counting.
+    coordinator.transitionFinished('home-post');
+    expect(coordinator.getRouteStatus('home-post').hasPendingTransition).toBe(false);
+  });
+});
+
 describe('routeScopeId', () => {
   it('builds route:<key> scope ids', () => {
     const { coordinator } = setup();

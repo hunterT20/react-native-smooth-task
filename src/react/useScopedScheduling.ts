@@ -163,18 +163,48 @@ export function useScopedIdleTask(
 
   return useCallback(
     (callback: TaskCallback, options?: IdleTaskOptions): TaskHandle => {
-      const inner = scheduler.schedule(scopeId, callback, {
-        scheduling: 'idle',
-        priority: options?.priority ?? 'background',
-        ...(options?.key !== undefined ? { key: options.key } : {}),
-      });
+      // Settled tasks (completed/failed/cancelled) must not linger in the
+      // tracked set — on a long-lived screen it would grow with every task
+      // ever scheduled. `finished` also guards the sync-settle case where
+      // the callback ran before the handle could be tracked.
+      let finished = false;
       const tracked: TaskHandle = {
         cancel: () => {
           inner.cancel();
           handlesRef.current.delete(tracked);
         },
       };
-      handlesRef.current.add(tracked);
+      const finish = (): void => {
+        finished = true;
+        handlesRef.current.delete(tracked);
+      };
+      const inner = scheduler.schedule(
+        scopeId,
+        (signal) => {
+          // Scheduler-side cancels (dedupe, scope release, dispose) abort
+          // the signal without the callback settling — untrack those too.
+          signal.addEventListener('abort', finish, { once: true });
+          let result: void | Promise<void>;
+          try {
+            result = callback(signal);
+          } catch (error) {
+            finish();
+            throw error;
+          }
+          if (result != null && typeof result.then === 'function') {
+            result.then(finish, finish);
+          } else {
+            finish();
+          }
+          return result;
+        },
+        {
+          scheduling: 'idle',
+          priority: options?.priority ?? 'background',
+          ...(options?.key !== undefined ? { key: options.key } : {}),
+        }
+      );
+      if (!finished) handlesRef.current.add(tracked);
       return tracked;
     },
     [scheduler, scopeId]

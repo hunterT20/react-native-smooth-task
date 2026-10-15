@@ -393,7 +393,7 @@ describe('drain turns and maxTasksPerTurn', () => {
   });
 
   it('does not recurse the drain when a callback schedules more work', () => {
-    const { gate, scheduler } = setup({ maxTasksPerTurn: 2 });
+    const { gate, scheduler, timerHost } = setup({ maxTasksPerTurn: 2 });
     gate.set(SCOPE_A, true);
     const order: string[] = [];
 
@@ -408,9 +408,29 @@ describe('drain turns and maxTasksPerTurn', () => {
       order.push('outer:end');
     });
 
-    // inner-1 fits the same turn (cap 2); inner-2 needs a dirty loop turn —
-    // still synchronous, but strictly after the outer callback finished.
+    // The turn budget spans reentrant scheduling: inner-1 fills it, inner-2
+    // continues on the next macrotask instead of the same call stack.
+    expect(order).toEqual(['outer:start', 'outer:end', 'inner-1']);
+    timerHost.tick();
     expect(order).toEqual(['outer:start', 'outer:end', 'inner-1', 'inner-2']);
+  });
+
+  it('caps a reentrant scheduling chain at maxTasksPerTurn per macrotask', () => {
+    const { gate, scheduler, timerHost } = setup({ maxTasksPerTurn: 8 });
+    gate.set(SCOPE_A, true);
+    let count = 0;
+    const chain = (): void => {
+      count += 1;
+      if (count < 1000) scheduler.schedule(SCOPE_A, chain);
+    };
+    scheduler.schedule(SCOPE_A, chain);
+
+    // Without a drain-wide budget this chain would run all 1000 callbacks
+    // synchronously through the dirty-loop.
+    expect(count).toBe(8);
+    for (let i = 0; i < 200 && count < 1000; i++) timerHost.tick();
+    expect(count).toBe(1000);
+    expect(timerHost.pendingCount).toBe(0);
   });
 
   it('a queued continuation drains newly eligible tasks later', () => {

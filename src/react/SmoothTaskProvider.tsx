@@ -15,7 +15,7 @@
  *  All events also fan out to `context.diagnostics.subscribe` listeners.
  */
 
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { AppState } from 'react-native';
 import { createTaskScheduler } from '../core/TaskScheduler';
 import { createDefaultIdleHost } from '../core/IdleHost';
@@ -103,10 +103,23 @@ export function SmoothTaskProvider({
   }, [pause, value]);
 
   // Dispose both on unmount (scheduler first — it subscribes to the gate).
+  //
+  // StrictMode double-invokes mount effects (setup → cleanup → setup) while
+  // keeping `value` — an eager cleanup would dispose the live runtime and
+  // leave every later schedule() silently cancelled. Disposal is deferred
+  // to a microtask and cancelled when a synchronous re-setup supersedes it;
+  // on a real unmount the microtask completes the dispose.
+  const disposeVersion = useRef(0);
   useEffect(() => {
+    const versions = disposeVersion;
+    versions.current += 1;
+    const version = versions.current;
     return () => {
-      value.scheduler.dispose();
-      value.coordinator.dispose();
+      void Promise.resolve().then(() => {
+        if (versions.current !== version) return;
+        value.scheduler.dispose();
+        value.coordinator.dispose();
+      });
     };
   }, [value]);
 

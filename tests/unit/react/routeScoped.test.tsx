@@ -188,8 +188,15 @@ describe('route-scoped useAfterTransition', () => {
     await pump();
     expect(cb).toHaveBeenCalledTimes(2);
 
+    // '<root>' has emitted transition events above, so the navigator is
+    // known-animated: a state-change refocus now settles only after the
+    // transition lifecycle completes — emit it like a real navigator.
     await feed(coordinator, 1);
+    await act(() => coordinator.transitionStarted('route-b'));
+    await act(() => coordinator.transitionFinished('route-b'));
     await feed(coordinator, 0); // epoch 3
+    await act(() => coordinator.transitionStarted('route-a'));
+    await act(() => coordinator.transitionFinished('route-a'));
     await pump();
     expect(cb).toHaveBeenCalledTimes(3);
   });

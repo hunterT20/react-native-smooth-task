@@ -13,6 +13,10 @@ A route is **settled** when all of the following hold:
 - the route key exists in the latest delivered navigation state,
 - the route is on the focused path (`index` selects it at every ancestor level),
 - no transition barrier is open on any navigator along its ancestor path,
+- no ancestor navigator is _settling_ — a focus-changing state was just
+  delivered and its transition events have not arrived yet (React
+  Navigation can publish the state before `transitionStart`, especially on
+  pop; see "Settling" in `docs/architecture.md`),
 - at least one navigation state has been delivered (`ready`),
 - the app is in `active` AppState (unless `pauseInBackground={false}`).
 
@@ -429,6 +433,7 @@ Emitted through the `diagnostics` provider prop / `context.diagnostics`:
 | `no-open-barrier`                                                       | debug | `transitionEnd` arrived with no open barrier on that navigator.                                                                     |
 | `gesture-recovery`                                                      | debug | Gesture cancelled — barrier held open for the recovery animation.                                                                   |
 | `stalled-transition`                                                    | warn  | A barrier has been open longer than `stallWarningMs` (default 4000ms). Detection only — barriers are never auto-released.           |
+| `settling` / `settling-cleared` / `settling-elapsed`                    | debug | A navigator's selected route changed and its transition events are pending; cleared by lifecycle events or a ~300ms silence that classifies the navigator non-animated. |
 | `event-buffered`                                                        | debug | A transition event arrived for a route key that cannot be resolved yet; replayed on the next state delivery.                        |
 | `dropped-event`                                                         | warn  | A buffered event expired (~2s TTL) without its route resolving.                                                                     |
 | `navigation-ready`                                                      | info  | First navigation state delivered.                                                                                                   |

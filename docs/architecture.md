@@ -86,8 +86,36 @@ settled = exists && focusedOnPath && !hasPendingTransition && ready && appActive
   because focus is computed from the tree, not from events.
 - `hasPendingTransition`: an open barrier exists on **any** navNode along the
   route's ancestor path — so a modal opening on the root stack also blocks
-  work scheduled deep inside a nested tab's stack.
+  work scheduled deep inside a nested tab's stack — **or** an ancestor
+  navNode is _settling_ (see below).
 - `focusEpoch`: see below.
+
+## Settling — the state→event ordering gap
+
+React Navigation can publish a focus-changing state **before** the matching
+`transitionStart` arrives (pop especially; the gap is wider on native-stack
+where events cross the bridge asynchronously). A drain in that window would
+release the newly focused route's tasks mid-transition — exactly what the
+library exists to prevent.
+
+When a rebuild reports a navNode whose `index`-selected member changed, the
+coordinator marks that navNode **settling**; routes on its path count as
+having a pending transition until lifecycle evidence resolves it:
+
+- a `transitionStart`/`transitionEnd`/`gestureCancel` event — the real
+  barrier then takes over,
+- ~300ms of silence — the navNode is classified non-animated and stops
+  waiting (a later transition event heals the classification back to
+  animated),
+- the navNode's death (`navnode-purged`).
+
+Settling is **evidence-gated**: navNodes that never emitted any lifecycle
+event (unwired subtrees — e.g. a tab bar with no listener hooks) are never
+marked, so they keep plain focus-only gating and cannot deadlock. The first
+state delivery is the baseline and never marks anything. Settling is not a
+barrier — it exists to cover the event-ordering hole, which is why the
+silence timeout is a legitimate release here while barriers are never
+auto-released.
 
 ## navNode-scoped barriers
 
@@ -122,6 +150,13 @@ barrier that would block forever. Note the retention rule is applied inside
 `rebuild` before the purge pass, so an open barrier alone does _not_ keep a
 tombstone alive across a delivery that empties the navNode — it only keeps
 the mapping resolvable during the rebuild itself.
+
+Tombstones are additionally bounded to the 64 most recently removed routes
+(FIFO): they exist only to resolve a late `transitionStart`, and events
+older than that never arrive — while a long-lived navNode like `<root>`
+would otherwise accumulate one dead key per pop for the app's lifetime.
+`seenRouteKeys` (which backs the `untracked-route` warning) is pruned to
+live + retained keys on every rebuild for the same reason.
 
 ## Gesture recovery
 

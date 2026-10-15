@@ -92,6 +92,43 @@ describe('tombstones', () => {
     // …but the navNode is still reported dead for the coordinator to purge.
     expect(result.deadNavNodeIds).toContain('parent');
   });
+
+  it('bounds tombstones — a push/pop churn on a living navNode does not grow forever', () => {
+    const registry = new RouteRegistry();
+    registry.rebuild(nav([route('a')], 0), NO_BARRIERS);
+    // 10k push/pop cycles on '<root>' (always alive) — each pop leaves a
+    // tombstone for late transition events, bounded by the FIFO cap.
+    for (let i = 0; i < 10_000; i += 1) {
+      registry.rebuild(nav([route('a'), route(`b${i}`)], 1), NO_BARRIERS);
+      registry.rebuild(nav([route('a')], 0), NO_BARRIERS);
+    }
+    expect(registry.tombstoneCount).toBeLessThanOrEqual(64);
+    // seen bookkeeping shrinks to live + retained keys too.
+    expect(registry.hasSeenRoute('a')).toBe(true);
+    expect(registry.hasSeenRoute('b0')).toBe(false); // evicted long ago
+    expect(registry.hasSeenRoute('b9999')).toBe(true); // still tombstoned
+  });
+});
+
+describe('focusChangedNavNodeIds', () => {
+  it('reports navNodes whose selected member changed; new navNodes excluded', () => {
+    const registry = new RouteRegistry();
+    // first rebuild establishes the baseline — nothing "changed"
+    const first = registry.rebuild(appTree(), NO_BARRIERS);
+    expect(first.focusChangedNavNodeIds).toEqual([]);
+
+    // A push inside HomeStack: only 'tab-home' changed selection.
+    const pushed = registry.rebuild(appTree({ homeIndex: 1 }), NO_BARRIERS);
+    expect(pushed.focusChangedNavNodeIds).toEqual(['tab-home']);
+
+    // A tab switch: only 'tabs' changed.
+    const switched = registry.rebuild(appTree({ homeIndex: 1, tabIndex: 1 }), NO_BARRIERS);
+    expect(switched.focusChangedNavNodeIds).toEqual(['tabs']);
+
+    // Identical re-delivery changes nothing.
+    const same = registry.rebuild(appTree({ homeIndex: 1, tabIndex: 1 }), NO_BARRIERS);
+    expect(same.focusChangedNavNodeIds).toEqual([]);
+  });
 });
 
 describe('focusEpoch', () => {

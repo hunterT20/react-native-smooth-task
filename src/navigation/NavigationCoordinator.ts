@@ -10,6 +10,17 @@
  * Events for keys that cannot be resolved at all are buffered and replayed
  * on the next `setNavigationState`; after ~2s they are dropped with a
  * `dropped-event` warning.
+ *
+ * Settling: that same ordering gap (state delivered, transition events not
+ * yet arrived — widened on native-stack where events cross the bridge
+ * asynchronously) would let a drain release route tasks mid-transition.
+ * When a rebuild shows a navNode's selected route changed, the navNode is
+ * marked "settling" and counts as a pending transition until lifecycle
+ * evidence resolves it: a transition event (a real barrier then takes
+ * over), a focus/blur event on a navNode already classified non-animated,
+ * or a silence timeout (which classifies the navNode non-animated).
+ * NavNodes that never emitted any event are never marked — unwired
+ * subtrees keep focus-only gating.
  */
 
 import { createDefaultTimerHost } from '../core/Hosts';
@@ -33,6 +44,14 @@ import type {
 
 const DEFAULT_STALL_WARNING_MS = 4000;
 const BUFFERED_EVENT_TTL_MS = 2000;
+
+/**
+ * Upper bound on the state→transition-event gap the coordinator will wait
+ * out before concluding a focus change was not animated. Settling is not a
+ * barrier — it exists to cover the event-ordering hole, so a timeout here
+ * is a legitimate release (and doubles as non-animated classification).
+ */
+const SETTLING_SILENCE_MS = 300;
 
 /**
  * How long the coordinator waits for any sign of navigation wiring (a
@@ -111,6 +130,14 @@ export function createNavigationCoordinator(
   /** `${kind}:${routeKey}` → buffered event awaiting a resolvable navNode. */
   const bufferedEvents = new Map<string, BufferedEvent>();
   const focusHints = new Map<string, FocusHint>();
+  /** navNodeId → silence-timer handle while awaiting transition evidence. */
+  const settlingNavNodes = new Map<string, unknown>();
+  /** navNodeIds that ever emitted a transition-family event. */
+  const animatedNavNodes = new Set<string>();
+  /** navNodeIds that emitted any lifecycle event (incl. focus/blur). */
+  const observedNavNodes = new Set<string>();
+  /** navNodeIds whose focus changes provably arrive without transitions. */
+  const nonAnimatedNavNodes = new Set<string>();
   const warnedUntrackedRoutes = new Set<string>();
   const warnedUnknownScopePrefixes = new Set<string>();
 
@@ -189,6 +216,55 @@ export function createNavigationCoordinator(
     }, STANDALONE_DETECTION_DELAY_MS);
   }
 
+  // --- settling (state→event ordering gap) --------------------------------
+
+  function clearSettling(navNodeId: string, via: string): boolean {
+    const handle = settlingNavNodes.get(navNodeId);
+    if (handle === undefined) return false;
+    timers.clearTimeout(handle);
+    settlingNavNodes.delete(navNodeId);
+    emit('debug', 'settling-cleared', `navigator '${navNodeId}' settling cleared (${via})`, {
+      details: { navNodeId, via },
+    });
+    return true;
+  }
+
+  /**
+   * Gate a navNode whose selected route just changed until transition
+   * evidence resolves the change. No-ops when a barrier already covers the
+   * gap, when the navNode never emitted lifecycle events (unwired subtree
+   * — focus-only gating stays), or when it is classified non-animated
+   * (its own focus/blur events release it quickly).
+   */
+  function markSettling(navNodeId: string): void {
+    if (settlingNavNodes.has(navNodeId)) return;
+    if (barriers.hasOpenBarrier(navNodeId)) return;
+    if (!observedNavNodes.has(navNodeId)) return;
+    if (nonAnimatedNavNodes.has(navNodeId)) return;
+    settlingNavNodes.set(
+      navNodeId,
+      timers.setTimeout(() => {
+        if (!settlingNavNodes.delete(navNodeId)) return;
+        nonAnimatedNavNodes.add(navNodeId);
+        emit(
+          'debug',
+          'settling-elapsed',
+          `navigator '${navNodeId}' changed focus with no transition events — assuming non-animated`,
+          { details: { navNodeId } }
+        );
+        notify();
+      }, SETTLING_SILENCE_MS)
+    );
+    emit(
+      'debug',
+      'settling',
+      `navigator '${navNodeId}' focus changed — awaiting transition events`,
+      {
+        details: { navNodeId },
+      }
+    );
+  }
+
   // --- transition events ---------------------------------------------------
 
   function bufferEvent(kind: TransitionEventKind, routeKey: string): void {
@@ -224,6 +300,12 @@ export function createNavigationCoordinator(
     routeKey: string,
     navNodeId: string
   ): boolean {
+    // Any transition-family event proves this navNode animates — settle the
+    // ordering gap and (re)classify it as animated.
+    observedNavNodes.add(navNodeId);
+    animatedNavNodes.add(navNodeId);
+    nonAnimatedNavNodes.delete(navNodeId);
+    clearSettling(navNodeId, 'transition-event');
     switch (kind) {
       case 'transition-started': {
         const opened = barriers.open(navNodeId, 'transition', routeKey);
@@ -295,8 +377,22 @@ export function createNavigationCoordinator(
     for (const navNodeId of result.deadNavNodeIds) {
       barriers.close(navNodeId, 'navnode-purged');
       registry.purgeNavNode(navNodeId);
+      clearSettling(navNodeId, 'navnode-purged');
+      observedNavNodes.delete(navNodeId);
+      animatedNavNodes.delete(navNodeId);
+      nonAnimatedNavNodes.delete(navNodeId);
     }
     replayBufferedEvents();
+
+    // The state→event ordering gap: a focus-changing delivery can precede
+    // its transitionStarted. Mark those navNodes 'settling' so freshly
+    // focused routes don't release tasks before the animation lifecycle
+    // catches up. First delivery is the baseline — nothing transitioned.
+    if (!firstDelivery && !isStandaloneDegraded()) {
+      for (const navNodeId of result.focusChangedNavNodeIds) {
+        markSettling(navNodeId);
+      }
+    }
 
     if (firstDelivery) {
       emit('info', 'navigation-ready', 'navigation state received — coordinator is ready', {});
@@ -348,18 +444,24 @@ export function createNavigationCoordinator(
     handleTransitionEvent('gesture-cancelled', routeKey);
   }
 
-  function routeFocused(routeKey: string): void {
+  function handleFocusHint(event: 'focus' | 'blur', routeKey: string): void {
     if (disposed) return;
-    // Hint for diagnostics only — authoritative focus comes from the state
-    // tree, so this does not broadcast.
-    focusHints.set(routeKey, { event: 'focus', at: timers.now() });
+    // Hint for diagnostics + wiring evidence — authoritative focus comes
+    // from the state tree, so this does not broadcast.
+    focusHints.set(routeKey, { event, at: timers.now() });
     noteNavigationSignal();
+    // A navNode emitting focus/blur is wired — its focus changes get
+    // settling marks (unwired subtrees keep focus-only gating).
+    const navNodeId = registry.resolveNavNodeId(routeKey);
+    if (navNodeId !== undefined) observedNavNodes.add(navNodeId);
+  }
+
+  function routeFocused(routeKey: string): void {
+    handleFocusHint('focus', routeKey);
   }
 
   function routeBlurred(routeKey: string): void {
-    if (disposed) return;
-    focusHints.set(routeKey, { event: 'blur', at: timers.now() });
-    noteNavigationSignal();
+    handleFocusHint('blur', routeKey);
   }
 
   function getRouteStatus(routeKey: string): RouteStatus {
@@ -368,7 +470,9 @@ export function createNavigationCoordinator(
     const focusedOnPath = record?.focusedOnPath ?? false;
     const hasPendingTransition =
       record !== undefined &&
-      record.navNodeIdsOnPath.some((navNodeId) => barriers.hasOpenBarrier(navNodeId));
+      record.navNodeIdsOnPath.some(
+        (navNodeId) => barriers.hasOpenBarrier(navNodeId) || settlingNavNodes.has(navNodeId)
+      );
     const settled = exists && focusedOnPath && !hasPendingTransition && ready && appActive;
     return {
       exists,
@@ -436,6 +540,10 @@ export function createNavigationCoordinator(
       timers.clearTimeout(event.expiryHandle);
     }
     bufferedEvents.clear();
+    for (const handle of settlingNavNodes.values()) {
+      timers.clearTimeout(handle);
+    }
+    settlingNavNodes.clear();
     barriers.dispose();
     listeners.clear();
     navigators.clear();

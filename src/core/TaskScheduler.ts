@@ -200,14 +200,15 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
 
   // --- transition drain -------------------------------------------------
 
-  /** One drain turn: start at most `maxTasksPerTurn` eligible tasks. */
-  function runTurn(): void {
+  /** One drain turn: start at most `budget` eligible tasks; returns count. */
+  function runTurn(budget: number): number {
     let started = 0;
-    while (started < maxTasksPerTurn) {
+    while (started < budget) {
       const task = pickNext('transition');
-      if (task === null || !startTask(task)) return;
+      if (task === null || !startTask(task)) break;
       started += 1;
     }
+    return started;
   }
 
   /** Queue a macrotask continuation while eligible transition work remains. */
@@ -224,16 +225,21 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
     if (disposed) return;
     if (draining) {
       // schedule()/broadcast inside a running callback must not recurse —
-      // mark dirty; the outer loop runs another turn.
+      // mark dirty; the outer loop continues within the SAME budget.
       drainDirty = true;
       return;
     }
     draining = true;
     try {
+      // The turn budget applies to the whole drain, reentrant turns
+      // included — otherwise a callback that keeps scheduling would run
+      // unbounded work in one call stack. Leftover dirty work continues
+      // through the macrotask continuation below.
+      let started = 0;
       do {
         drainDirty = false;
-        runTurn();
-      } while (drainDirty);
+        started += runTurn(maxTasksPerTurn - started);
+      } while (drainDirty && started < maxTasksPerTurn);
     } finally {
       draining = false;
     }

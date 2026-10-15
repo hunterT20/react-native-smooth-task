@@ -15,7 +15,7 @@ jest.mock('@react-navigation/native', () => ({
   useRoute: jest.fn(),
 }));
 
-import React, { StrictMode, type ReactNode } from 'react';
+import React, { StrictMode, useEffect, type ReactNode } from 'react';
 import { Text } from 'react-native';
 import { act, render, renderHook, screen } from '@testing-library/react-native';
 import { useRoute } from '@react-navigation/native';
@@ -107,9 +107,15 @@ describe('T12/T13 — once vs every-focus', () => {
     await flush();
     expect(cb).toHaveBeenCalledTimes(1);
 
-    // Blur → refocus: second epoch → second run.
+    // Blur → refocus: second epoch → second run. A real navigator emits
+    // the transition lifecycle around each focus-changing state change —
+    // simulate it so the route leaves 'settling' between epochs.
     await act(() => coordinator.setNavigationState(twoRouteState(1)));
+    await act(() => coordinator.transitionStarted('route-b'));
+    await act(() => coordinator.transitionFinished('route-b'));
     await act(() => coordinator.setNavigationState(twoRouteState(0)));
+    await act(() => coordinator.transitionStarted('route-a'));
+    await act(() => coordinator.transitionFinished('route-a'));
     await flush();
     expect(cb).toHaveBeenCalledTimes(2);
   });
@@ -166,6 +172,42 @@ describe('T19 — React StrictMode double-mount', () => {
     await act(() => result.current.ctx.coordinator.setNavigationState(twoRouteState(0)));
     await flush();
     expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('the provider runtime survives StrictMode effect replay (render-based)', async () => {
+    // renderHook trees don't trigger the mount-time effect replay on the
+    // provider — a plain render does (and that is how apps mount it).
+    // Without the deferred dispose, the replay cleanup kills the shared
+    // scheduler and every later schedule() is silently cancelled.
+    const seen: string[] = [];
+    let ctx: SmoothTaskContextValue | null = null;
+    function Screen() {
+      const value = useCtx();
+      // Capture after commit, not during render (render purity).
+      useEffect(() => {
+        ctx = value;
+      }, [value]);
+      return null;
+    }
+    await render(
+      <StrictMode>
+        <SmoothTaskProvider>
+          <Screen />
+        </SmoothTaskProvider>
+      </StrictMode>
+    );
+    await flush();
+
+    await act(async () => {
+      ctx!.scheduler.schedule('app', () => {
+        seen.push('post-mount');
+      });
+    });
+    await flush();
+    expect(seen).toEqual(['post-mount']);
+    // Coordinator is alive too — navigation state still wires up.
+    await act(async () => ctx!.coordinator.setNavigationState(twoRouteState(0)));
+    expect(ctx!.coordinator.ready).toBe(true);
   });
 });
 
