@@ -17,10 +17,13 @@
  * When a rebuild shows a navNode's selected route changed, the navNode is
  * marked "settling" and counts as a pending transition until lifecycle
  * evidence resolves it: a transition event (a real barrier then takes
- * over), a focus/blur event on a navNode already classified non-animated,
- * or a silence timeout (which classifies the navNode non-animated).
- * NavNodes that never emitted any event are never marked — unwired
- * subtrees keep focus-only gating.
+ * over), a `focus` event (the change demonstrably completed without
+ * animation), or a silence timeout. Silence only classifies a
+ * never-animated navNode as non-animated; a navNode known to animate keeps
+ * its classification and releases after `stallWarningMs` with a warning —
+ * a single quiet change must never let a late `transitionStart` find the
+ * gate already open. NavNodes that never emitted any event are never
+ * marked — unwired subtrees keep focus-only gating.
  */
 
 import { createDefaultTimerHost } from '../core/Hosts';
@@ -44,6 +47,10 @@ import type {
 
 const DEFAULT_STALL_WARNING_MS = 4000;
 const BUFFERED_EVENT_TTL_MS = 2000;
+/** Diagnostic-only bookkeeping keyed by route key is FIFO-bounded — route
+ * keys churn over an app's lifetime and stale entries are never needed. */
+const MAX_FOCUS_HINTS = 256;
+const MAX_WARNED_UNTRACKED_ROUTES = 256;
 
 /**
  * Upper bound on the state→transition-event gap the coordinator will wait
@@ -109,9 +116,10 @@ export function createNavigationCoordinator(
   };
 
   const registry = new RouteRegistry();
+  const stallWarningMs = deps.stallWarningMs ?? DEFAULT_STALL_WARNING_MS;
   const barriers = new BarrierRegistry({
     timers,
-    stallWarningMs: deps.stallWarningMs ?? DEFAULT_STALL_WARNING_MS,
+    stallWarningMs,
     emit: (diagnostic) => {
       const { level, code, message, routeKey, details } = diagnostic;
       emit(level, code, message, {
@@ -234,33 +242,54 @@ export function createNavigationCoordinator(
    * evidence resolves the change. No-ops when a barrier already covers the
    * gap, when the navNode never emitted lifecycle events (unwired subtree
    * — focus-only gating stays), or when it is classified non-animated
-   * (its own focus/blur events release it quickly).
+   * (its own focus events release it quickly).
+   *
+   * Silence windows differ by classification: a navNode that has emitted
+   * transition events before holds the gate for `stallWarningMs` — a real
+   * transition's `transitionStart` never takes that long, so silence means
+   * the events were lost (warned, not silently classified). A navNode that
+   * only ever emitted focus/blur gets a short window: silence there is
+   * genuine evidence it does not animate.
    */
   function markSettling(navNodeId: string): void {
     if (settlingNavNodes.has(navNodeId)) return;
     if (barriers.hasOpenBarrier(navNodeId)) return;
     if (!observedNavNodes.has(navNodeId)) return;
     if (nonAnimatedNavNodes.has(navNodeId)) return;
+    const silenceMs = animatedNavNodes.has(navNodeId) ? stallWarningMs : SETTLING_SILENCE_MS;
     settlingNavNodes.set(
       navNodeId,
       timers.setTimeout(() => {
         if (!settlingNavNodes.delete(navNodeId)) return;
-        nonAnimatedNavNodes.add(navNodeId);
-        emit(
-          'debug',
-          'settling-elapsed',
-          `navigator '${navNodeId}' changed focus with no transition events — assuming non-animated`,
-          { details: { navNodeId } }
-        );
+        if (animatedNavNodes.has(navNodeId)) {
+          // One silent change must not poison an animated navNode for later
+          // transitions — keep it animated, but release (liveness) and warn.
+          emit(
+            'warn',
+            'settling-unresolved',
+            `navigator '${navNodeId}' changed focus but no transition/focus events ` +
+              `arrived within ${silenceMs}ms — releasing anyway; transition events ` +
+              'may have been lost',
+            { details: { navNodeId, silenceMs } }
+          );
+        } else {
+          nonAnimatedNavNodes.add(navNodeId);
+          emit(
+            'debug',
+            'settling-elapsed',
+            `navigator '${navNodeId}' changed focus with no transition events — assuming non-animated`,
+            { details: { navNodeId } }
+          );
+        }
         notify();
-      }, SETTLING_SILENCE_MS)
+      }, silenceMs)
     );
     emit(
       'debug',
       'settling',
       `navigator '${navNodeId}' focus changed — awaiting transition events`,
       {
-        details: { navNodeId },
+        details: { navNodeId, silenceMs },
       }
     );
   }
@@ -305,7 +334,10 @@ export function createNavigationCoordinator(
     observedNavNodes.add(navNodeId);
     animatedNavNodes.add(navNodeId);
     nonAnimatedNavNodes.delete(navNodeId);
-    clearSettling(navNodeId, 'transition-event');
+    // Clearing the settling gate changes eligibility even when the barrier
+    // operation below is a no-op (e.g. transitionEnd with no matching
+    // transitionStart) — the caller must still broadcast.
+    let changed = clearSettling(navNodeId, 'transition-event');
     switch (kind) {
       case 'transition-started': {
         const opened = barriers.open(navNodeId, 'transition', routeKey);
@@ -316,9 +348,10 @@ export function createNavigationCoordinator(
             `transitionStarted for '${routeKey}' ignored — navigator '${navNodeId}' already has an open barrier`,
             { routeKey, details: { navNodeId } }
           );
-          return false;
+          break;
         }
-        return true;
+        changed = true;
+        break;
       }
       case 'transition-finished': {
         // NavNode-scoped close: also releases a barrier opened by a sibling
@@ -330,14 +363,17 @@ export function createNavigationCoordinator(
             `transitionFinished for '${routeKey}' — navigator '${navNodeId}' has no open barrier`,
             { routeKey, details: { navNodeId } }
           );
-          return false;
+          break;
         }
-        return true;
+        changed = true;
+        break;
       }
       case 'gesture-cancelled': {
-        return barriers.markGestureRecovery(navNodeId, routeKey) === 'opened';
+        changed = barriers.markGestureRecovery(navNodeId, routeKey) === 'opened' || changed;
+        break;
       }
     }
+    return changed;
   }
 
   function handleTransitionEvent(kind: TransitionEventKind, routeKey: string): void {
@@ -447,13 +483,31 @@ export function createNavigationCoordinator(
   function handleFocusHint(event: 'focus' | 'blur', routeKey: string): void {
     if (disposed) return;
     // Hint for diagnostics + wiring evidence — authoritative focus comes
-    // from the state tree, so this does not broadcast.
+    // from the state tree. Bounded FIFO: route keys churn over an app's
+    // lifetime and hints are never needed once the route is long gone.
     focusHints.set(routeKey, { event, at: timers.now() });
+    if (focusHints.size > MAX_FOCUS_HINTS) {
+      const oldest = focusHints.keys().next().value;
+      if (oldest !== undefined) focusHints.delete(oldest);
+    }
     noteNavigationSignal();
+    const navNodeId = registry.resolveNavNodeId(routeKey);
+    if (navNodeId === undefined) return;
     // A navNode emitting focus/blur is wired — its focus changes get
     // settling marks (unwired subtrees keep focus-only gating).
-    const navNodeId = registry.resolveNavNodeId(routeKey);
-    if (navNodeId !== undefined) observedNavNodes.add(navNodeId);
+    observedNavNodes.add(navNodeId);
+    // A `focus` event while settling is evidence the selection change
+    // visibly completed without transition events — release the gate.
+    // `blur` is not release evidence: it can fire while the leaving
+    // screen's animation is still running.
+    if (event === 'focus' && clearSettling(navNodeId, 'focus-event')) {
+      // Focus arrived with no transition events: the navNode demonstrated
+      // a non-animated change — but only classify when it never animated.
+      // An animated navNode may mix both (per-screen animationEnabled) and
+      // must stay gated so the next change can't release early.
+      if (!animatedNavNodes.has(navNodeId)) nonAnimatedNavNodes.add(navNodeId);
+      notify();
+    }
   }
 
   function routeFocused(routeKey: string): void {
@@ -490,7 +544,12 @@ export function createNavigationCoordinator(
 
     const routeKey = routeKeyFromScope(scopeId);
     if (routeKey !== null) {
-      if (ready && !registry.hasSeenRoute(routeKey) && !warnedUntrackedRoutes.has(routeKey)) {
+      if (
+        ready &&
+        !registry.hasSeenRoute(routeKey) &&
+        !warnedUntrackedRoutes.has(routeKey) &&
+        warnedUntrackedRoutes.size < MAX_WARNED_UNTRACKED_ROUTES
+      ) {
         warnedUntrackedRoutes.add(routeKey);
         emit(
           'warn',

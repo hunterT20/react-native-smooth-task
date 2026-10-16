@@ -250,6 +250,24 @@ describe('useIdleTask (app scope)', () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  it('retires the superseded tracked handle on same-key dedupe', async () => {
+    const { result } = await renderHook(() => useIdleTask(), { wrapper });
+    const handles: { cancel: () => void }[] = [];
+    // Scheduler dedupe cancels a superseded pending task internally without
+    // telling the hook — the hook mirrors it by cancelling the previous
+    // tracked handle, so 10k same-key schedules cannot accumulate handles.
+    for (let i = 0; i < 100; i += 1) {
+      const handle = result.current(jest.fn(), { key: 'k' });
+      jest.spyOn(handle, 'cancel');
+      handles.push(handle);
+    }
+    for (const handle of handles.slice(0, -1)) {
+      expect(handle.cancel).toHaveBeenCalledTimes(1);
+    }
+    expect(handles[99]!.cancel).not.toHaveBeenCalled();
+    await pump();
+  });
+
   it('is referentially stable across re-renders', async () => {
     const { result, rerender } = await renderHook(() => useIdleTask(), { wrapper });
     const first = result.current;

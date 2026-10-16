@@ -104,18 +104,32 @@ having a pending transition until lifecycle evidence resolves it:
 
 - a `transitionStart`/`transitionEnd`/`gestureCancel` event — the real
   barrier then takes over,
-- ~300ms of silence — the navNode is classified non-animated and stops
-  waiting (a later transition event heals the classification back to
-  animated),
+- a `focus` event on the navNode — the change demonstrably completed
+  without transition events (covers non-animated changes on otherwise
+  animated navigators, e.g. per-screen `animationEnabled: false`),
+- a silence timeout whose length depends on classification (below),
 - the navNode's death (`navnode-purged`).
 
-Settling is **evidence-gated**: navNodes that never emitted any lifecycle
-event (unwired subtrees — e.g. a tab bar with no listener hooks) are never
-marked, so they keep plain focus-only gating and cannot deadlock. The first
-state delivery is the baseline and never marks anything. Settling is not a
-barrier — it exists to cover the event-ordering hole, which is why the
-silence timeout is a legitimate release here while barriers are never
-auto-released.
+Classification is a three-tier machine, driven by observed evidence:
+
+- **unobserved** — no lifecycle events ever. Never marked: unwired
+  subtrees (e.g. a tab bar with no listener hooks) keep plain focus-only
+  gating and cannot deadlock. The first state delivery is the baseline and
+  never marks anything either.
+- **observed, never-animated** — focus/blur seen, no transition events.
+  ~300ms of silence classifies the navNode **non-animated** (skipped
+  thereafter); a `focus` event does the same immediately.
+- **animated** — at least one transition-family event seen. The gate holds
+  for `stallWarningMs` (default 4s): a real transition's events arrive
+  promptly, so silence that long means events were *lost* — the gate
+  releases with a `settling-unresolved` warning and the navNode **stays
+  animated** (one silent change never downgrades the classification, so a
+  late `transitionStart` can never find the gate already open).
+  A transition event heals `non-animated` back to `animated` at any time.
+
+Settling is not a barrier — it exists to cover the event-ordering hole —
+but it shares the same philosophy: release on evidence, warn on silence,
+never let a timer silently decide a transition is over.
 
 ## navNode-scoped barriers
 

@@ -669,6 +669,133 @@ describe('settling — the state→event ordering gap', () => {
     coordinator.transitionFinished('home-feed');
     expect(coordinator.isEligible('route:home-feed')).toBe(true);
   });
+
+  it('broadcasts when a lone transitionFinished clears settling (no barrier)', () => {
+    const { coordinator } = setup();
+    const listener = jest.fn();
+    coordinator.subscribe(listener);
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post'); // 'tab-home' observed
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    listener.mockClear();
+
+    // transitionEnd arrives without a matching transitionStart — the
+    // settle release must still reach the scheduler.
+    coordinator.transitionFinished('home-post');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('a focus event releases settling and classifies a never-animated navNode', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post'); // observed, never animated
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    // Focus delivered with no transition events: the change demonstrably
+    // completed — release now instead of waiting out the silence window.
+    coordinator.routeFocused('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+    // Classified non-animated: the next focus change is not gated.
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+  });
+
+  it('an animated navNode holds the gate past the short silence window', () => {
+    const { coordinator, timers } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-post'); // 'tab-home' is animated
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    // A transitionStart arriving after 300ms must still find the gate up —
+    // a released task could not be un-run otherwise.
+    timers.advance(300);
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    coordinator.transitionStarted('home-post'); // late, but covered
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+  });
+
+  it('animated navNode: stall-window silence warns and releases, but stays animated', () => {
+    const { coordinator, timers, sink } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-post'); // animated
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    timers.advance(4000); // stallWarningMs — pathological event loss
+    expect(sink.byCode('settling-unresolved')).toHaveLength(1);
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+
+    // Still animated — the next focus change is gated again, not skipped.
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(false);
+    coordinator.transitionStarted('home-feed');
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+  });
+
+  it('a focus event releases an animated navNode without downgrading it', () => {
+    const { coordinator, timers } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-post'); // animated
+
+    // Per-screen animationEnabled=false change: focus arrives, transitions do not.
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    coordinator.routeFocused('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+
+    // Still animated — the NEXT change waits for transition evidence again.
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(false);
+    timers.advance(300); // NOT released by the short window
+    expect(coordinator.isEligible('route:home-post')).toBe(false);
+    coordinator.transitionStarted('home-feed');
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+  });
+
+  it('a blur event does not release settling', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post');
+
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    coordinator.routeBlurred('home-post'); // leaving screen's blur — no release
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    coordinator.routeFocused('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+  });
+});
+
+describe('diagnostic bookkeeping bounds', () => {
+  it('bounds focusHints — oldest hints are evicted past the cap', () => {
+    const { coordinator, sink } = setup();
+    coordinator.setNavigationState(appTree());
+    // 300 focus events on keys never present in the state — the hints map
+    // is diagnostics-only and must not grow with route-key churn.
+    for (let i = 0; i < 300; i += 1) coordinator.routeFocused(`ephemeral-${i}`);
+
+    coordinator.isEligible('route:ephemeral-0'); // oldest — evicted
+    coordinator.isEligible('route:ephemeral-299'); // newest — retained
+    const warned = sink.byCode('untracked-route');
+    expect(warned).toHaveLength(2);
+    expect(warned[0]?.details?.focusHint).toBeUndefined();
+    expect(warned[1]?.details?.focusHint).toBe('focus');
+  });
+
+  it('bounds warnedUntrackedRoutes — warnings stop past the cap', () => {
+    const { coordinator, sink } = setup();
+    coordinator.setNavigationState(appTree());
+    for (let i = 0; i < 300; i += 1) coordinator.isEligible(`route:never-${i}`);
+    expect(sink.byCode('untracked-route')).toHaveLength(256);
+  });
 });
 
 describe('overlapping transitions (documented single-barrier semantics)', () => {
