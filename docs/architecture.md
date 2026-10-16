@@ -104,21 +104,29 @@ having a pending transition until lifecycle evidence resolves it:
 
 - a `transitionStart`/`transitionEnd`/`gestureCancel` event — the real
   barrier then takes over,
-- a `focus` event on the navNode — the change demonstrably completed
-  without transition events (covers non-animated changes on otherwise
-  animated navigators, e.g. per-screen `animationEnabled: false`),
 - a silence timeout whose length depends on classification (below),
 - the navNode's death (`navnode-purged`).
 
+`focus`/`blur` are deliberately **not** release evidence: React Navigation
+may deliver `focus` before `transitionStart`, so treating it as
+"animation done" would reopen the race this mechanism exists to close.
+They still feed diagnostics and (below) the wiring signal.
+
+Gating requires wiring evidence so unwired subtrees cannot deadlock:
+
+- any **registered navigator adapter** (`navigatorCount > 0`) — the app can
+  animate, so every navNode is gated, including a navNode whose very first
+  transition has not emitted anything yet; or
+- the navNode itself emitted lifecycle events (manual wiring without an
+  adapter registration).
+
 Classification is a three-tier machine, driven by observed evidence:
 
-- **unobserved** — no lifecycle events ever. Never marked: unwired
-  subtrees (e.g. a tab bar with no listener hooks) keep plain focus-only
-  gating and cannot deadlock. The first state delivery is the baseline and
-  never marks anything either.
-- **observed, never-animated** — focus/blur seen, no transition events.
-  ~300ms of silence classifies the navNode **non-animated** (skipped
-  thereafter); a `focus` event does the same immediately.
+- **unobserved** — no lifecycle events ever and no adapter registered.
+  Never marked: pure focus-only gating.
+- **observed, never-animated** — focus/blur seen (or gated by
+  registration), no transition events. ~300ms of silence classifies the
+  navNode **non-animated** (skipped thereafter).
 - **animated** — at least one transition-family event seen. The gate holds
   for `stallWarningMs` (default 4s): a real transition's events arrive
   promptly, so silence that long means events were *lost* — the gate
@@ -129,7 +137,10 @@ Classification is a three-tier machine, driven by observed evidence:
 
 Settling is not a barrier — it exists to cover the event-ordering hole —
 but it shares the same philosophy: release on evidence, warn on silence,
-never let a timer silently decide a transition is over.
+never let a timer silently decide a transition is over. The silence
+fallbacks are a **liveness** choice, not settled evidence — apps that need
+hard guarantees should treat a `settling-unresolved` warning as a signal
+that transition events were lost and investigate the adapter wiring.
 
 ## navNode-scoped barriers
 

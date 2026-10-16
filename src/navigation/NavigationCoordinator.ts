@@ -17,13 +17,14 @@
  * When a rebuild shows a navNode's selected route changed, the navNode is
  * marked "settling" and counts as a pending transition until lifecycle
  * evidence resolves it: a transition event (a real barrier then takes
- * over), a `focus` event (the change demonstrably completed without
- * animation), or a silence timeout. Silence only classifies a
- * never-animated navNode as non-animated; a navNode known to animate keeps
- * its classification and releases after `stallWarningMs` with a warning —
- * a single quiet change must never let a late `transitionStart` find the
- * gate already open. NavNodes that never emitted any event are never
- * marked — unwired subtrees keep focus-only gating.
+ * over), or a silence timeout. `focus`/`blur` are never release evidence —
+ * React Navigation may deliver `focus` before `transitionStart`. Silence
+ * only classifies a never-animated navNode as non-animated; a navNode
+ * known to animate keeps its classification and releases after
+ * `stallWarningMs` with a warning — a single quiet change must never let a
+ * late `transitionStart` find the gate already open. Gating requires
+ * wiring evidence (a registered adapter, or lifecycle events on the
+ * navNode) so unwired subtrees keep focus-only gating.
  */
 
 import { createDefaultTimerHost } from '../core/Hosts';
@@ -240,9 +241,12 @@ export function createNavigationCoordinator(
   /**
    * Gate a navNode whose selected route just changed until transition
    * evidence resolves the change. No-ops when a barrier already covers the
-   * gap, when the navNode never emitted lifecycle events (unwired subtree
-   * — focus-only gating stays), or when it is classified non-animated
-   * (its own focus events release it quickly).
+   * gap, when nothing suggests the navNode can animate (no registered
+   * adapter AND the navNode never emitted lifecycle events — an unwired
+   * subtree keeps focus-only gating and cannot deadlock), or when it is
+   * classified non-animated. A registered adapter means the app CAN
+   * animate: even a navNode that never emitted an event gets gated, which
+   * also covers its very first transition.
    *
    * Silence windows differ by classification: a navNode that has emitted
    * transition events before holds the gate for `stallWarningMs` — a real
@@ -254,8 +258,8 @@ export function createNavigationCoordinator(
   function markSettling(navNodeId: string): void {
     if (settlingNavNodes.has(navNodeId)) return;
     if (barriers.hasOpenBarrier(navNodeId)) return;
-    if (!observedNavNodes.has(navNodeId)) return;
     if (nonAnimatedNavNodes.has(navNodeId)) return;
+    if (navigators.size === 0 && !observedNavNodes.has(navNodeId)) return;
     const silenceMs = animatedNavNodes.has(navNodeId) ? stallWarningMs : SETTLING_SILENCE_MS;
     settlingNavNodes.set(
       navNodeId,
@@ -492,22 +496,12 @@ export function createNavigationCoordinator(
     }
     noteNavigationSignal();
     const navNodeId = registry.resolveNavNodeId(routeKey);
-    if (navNodeId === undefined) return;
-    // A navNode emitting focus/blur is wired — its focus changes get
-    // settling marks (unwired subtrees keep focus-only gating).
-    observedNavNodes.add(navNodeId);
-    // A `focus` event while settling is evidence the selection change
-    // visibly completed without transition events — release the gate.
-    // `blur` is not release evidence: it can fire while the leaving
-    // screen's animation is still running.
-    if (event === 'focus' && clearSettling(navNodeId, 'focus-event')) {
-      // Focus arrived with no transition events: the navNode demonstrated
-      // a non-animated change — but only classify when it never animated.
-      // An animated navNode may mix both (per-screen animationEnabled) and
-      // must stay gated so the next change can't release early.
-      if (!animatedNavNodes.has(navNodeId)) nonAnimatedNavNodes.add(navNodeId);
-      notify();
-    }
+    // A navNode emitting focus/blur is wired — evidence for settling when
+    // no adapter is registered (manual wiring). Deliberately NOT release
+    // evidence: React Navigation may deliver `focus` before
+    // `transitionStart`, so clearing the gate here could run tasks
+    // mid-transition — the race settling exists to close.
+    if (navNodeId !== undefined) observedNavNodes.add(navNodeId);
   }
 
   function routeFocused(routeKey: string): void {
@@ -544,12 +538,13 @@ export function createNavigationCoordinator(
 
     const routeKey = routeKeyFromScope(scopeId);
     if (routeKey !== null) {
-      if (
-        ready &&
-        !registry.hasSeenRoute(routeKey) &&
-        !warnedUntrackedRoutes.has(routeKey) &&
-        warnedUntrackedRoutes.size < MAX_WARNED_UNTRACKED_ROUTES
-      ) {
+      if (ready && !registry.hasSeenRoute(routeKey) && !warnedUntrackedRoutes.has(routeKey)) {
+        // FIFO-bound: evict the oldest warned key so new keys keep their
+        // warn-once semantics; an evicted key may warn once more.
+        if (warnedUntrackedRoutes.size >= MAX_WARNED_UNTRACKED_ROUTES) {
+          const oldest = warnedUntrackedRoutes.values().next().value;
+          if (oldest !== undefined) warnedUntrackedRoutes.delete(oldest);
+        }
         warnedUntrackedRoutes.add(routeKey);
         emit(
           'warn',

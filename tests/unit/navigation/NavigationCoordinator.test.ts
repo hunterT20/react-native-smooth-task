@@ -688,20 +688,37 @@ describe('settling — the state→event ordering gap', () => {
     expect(listener).toHaveBeenCalled();
   });
 
-  it('a focus event releases settling and classifies a never-animated navNode', () => {
+  it('does not release settling on focus before transitionStart', () => {
     const { coordinator } = setup();
     coordinator.setNavigationState(appTree({ homeIndex: 1 }));
-    coordinator.routeFocused('home-post'); // observed, never animated
+    // Known-animated navigator.
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-post');
 
+    // Pop: state first. React Navigation may deliver `focus` BEFORE
+    // `transitionStart` — it is not animation-settled evidence.
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    coordinator.routeFocused('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+
+    coordinator.transitionStarted('home-post');
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    coordinator.transitionFinished('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+  });
+
+  it('gates an unobserved navNode once a navigator adapter is registered', () => {
+    const { coordinator } = setup();
+    coordinator.registerNavigator({ instanceId: 'stack:root:1', kind: 'stack' });
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+
+    // No events yet — registration alone means the app CAN animate, so the
+    // FIRST transition on this navNode is covered too.
     coordinator.setNavigationState(appTree({ homeIndex: 0 }));
     expect(coordinator.isEligible('route:home-feed')).toBe(false);
-    // Focus delivered with no transition events: the change demonstrably
-    // completed — release now instead of waiting out the silence window.
-    coordinator.routeFocused('home-feed');
+    coordinator.transitionStarted('home-post');
+    coordinator.transitionFinished('home-feed');
     expect(coordinator.isEligible('route:home-feed')).toBe(true);
-    // Classified non-animated: the next focus change is not gated.
-    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
-    expect(coordinator.isEligible('route:home-post')).toBe(true);
   });
 
   it('an animated navNode holds the gate past the short silence window', () => {
@@ -740,36 +757,35 @@ describe('settling — the state→event ordering gap', () => {
     expect(coordinator.isEligible('route:home-post')).toBe(true);
   });
 
-  it('a focus event releases an animated navNode without downgrading it', () => {
+  it('focus events do not release or downgrade an animated navNode', () => {
     const { coordinator, timers } = setup();
     coordinator.setNavigationState(appTree({ homeIndex: 1 }));
     coordinator.transitionStarted('home-post');
     coordinator.transitionFinished('home-post'); // animated
 
-    // Per-screen animationEnabled=false change: focus arrives, transitions do not.
+    // focus arrives before any transition evidence — the gate stays.
     coordinator.setNavigationState(appTree({ homeIndex: 0 }));
     coordinator.routeFocused('home-feed');
-    expect(coordinator.isEligible('route:home-feed')).toBe(true);
-
-    // Still animated — the NEXT change waits for transition evidence again.
-    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
-    expect(coordinator.isEligible('route:home-post')).toBe(false);
-    timers.advance(300); // NOT released by the short window
-    expect(coordinator.isEligible('route:home-post')).toBe(false);
-    coordinator.transitionStarted('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    // Only transition-family events (or the long silence) resolve it.
+    coordinator.transitionStarted('home-post');
     coordinator.transitionFinished('home-feed');
-    expect(coordinator.isEligible('route:home-post')).toBe(true);
+    expect(coordinator.isEligible('route:home-feed')).toBe(true);
+    expect(timers.pendingCount).toBe(0);
   });
 
   it('a blur event does not release settling', () => {
-    const { coordinator } = setup();
+    const { coordinator, timers } = setup();
     coordinator.setNavigationState(appTree({ homeIndex: 1 }));
     coordinator.routeFocused('home-post');
 
     coordinator.setNavigationState(appTree({ homeIndex: 0 }));
-    coordinator.routeBlurred('home-post'); // leaving screen's blur — no release
-    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    // Neither blur nor focus is release evidence — blur may fire while the
+    // leaving screen still animates, focus may arrive before transitionStart.
+    coordinator.routeBlurred('home-post');
     coordinator.routeFocused('home-feed');
+    expect(coordinator.isEligible('route:home-feed')).toBe(false);
+    timers.advance(300); // silence → never-animated → classify + release
     expect(coordinator.isEligible('route:home-feed')).toBe(true);
   });
 });
@@ -790,11 +806,17 @@ describe('diagnostic bookkeeping bounds', () => {
     expect(warned[1]?.details?.focusHint).toBe('focus');
   });
 
-  it('bounds warnedUntrackedRoutes — warnings stop past the cap', () => {
+  it('bounds warnedUntrackedRoutes — FIFO keeps warn-once for recent keys', () => {
     const { coordinator, sink } = setup();
     coordinator.setNavigationState(appTree());
     for (let i = 0; i < 300; i += 1) coordinator.isEligible(`route:never-${i}`);
-    expect(sink.byCode('untracked-route')).toHaveLength(256);
+    expect(sink.byCode('untracked-route')).toHaveLength(300); // all warned once
+
+    // A still-retained key stays silent; an evicted one may warn once more.
+    coordinator.isEligible('route:never-299');
+    expect(sink.byCode('untracked-route')).toHaveLength(300);
+    coordinator.isEligible('route:never-0');
+    expect(sink.byCode('untracked-route')).toHaveLength(301);
   });
 });
 
