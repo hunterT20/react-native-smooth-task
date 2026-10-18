@@ -120,6 +120,13 @@ Gating requires wiring evidence so unwired subtrees cannot deadlock:
 - the navNode itself emitted lifecycle events (manual wiring without an
   adapter registration).
 
+> Known imprecision: registration gating is **global** — one registered
+> adapter gates every navNode, so an unanimated sibling navigator (e.g. a
+> tab switch under a bar with a registered root stack) may hold its gate
+> for the ~300ms silence window once. `NavigatorRegistration` carries no
+> navNode ownership field today; a scoped ownership mapping is deferred
+> until real-device event traces show whether the extra latency matters.
+
 Classification is a three-tier machine, driven by observed evidence:
 
 - **unobserved** — no lifecycle events ever and no adapter registered.

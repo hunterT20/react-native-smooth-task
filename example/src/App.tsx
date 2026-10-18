@@ -1,36 +1,59 @@
 /**
- * Example app — reference wiring for react-native-smooth-task.
+ * Example app — runnable Expo project for react-native-smooth-task.
  *
  * Navigation tree (matches docs/architecture.md examples):
  *
- *   RootStack '<root>'       → [ MainTabs, Settings(modal) ]
- *   MainTabs                 → [ Home, Orders ]
- *   HomeStack  'tab:Home'    → [ Feed(HeavyScreen), Post(DetailScreen) ]
- *   OrdersStack 'tab:Orders' → [ OrdersList(OrdersScreen), OrderDetail ]
+ *   RootStack  '<root>'      → [ MainTabs, Settings(modal) ]    — JS stack
+ *   MainTabs                 → [ Home, Orders ]                 — tabs (no adapter)
+ *   HomeStack  'tab:Home'    → [ Feed(HeavyScreen), Post ]      — JS stack
+ *   OrdersStack 'tab:Orders' → [ OrdersList, OrderDetail ]      — native stack
  *
- * Wiring recipe:
+ * The mixed JS-stack + native-stack + unadorned-tabs layout exists to
+ * exercise both adapters and state-tree-only focus on one device:
+ *
  *   1. <SmoothTaskProvider> wraps everything (diagnostics in __DEV__).
- *   2. useSmoothNavigationContainer({ navigationRef }) → spread onto
+ *   2. useSmoothNavigationContainer({ navigationRef }) spreads onto
  *      <NavigationContainer> so the coordinator receives the state tree.
- *   3. useSmoothStackListeners({ id }) → screenListeners on EVERY stack
- *      navigator (Root + Home + Orders). Tabs need no listeners — their
- *      focus ancestry is derived from the state tree's index.
+ *   3. One listener hook per stack navigator — useSmoothStackListeners for
+ *      JS stacks, useSmoothNativeStackListeners for native stacks. Tabs need
+ *      no listeners; focus ancestry comes from the state tree's index.
+ *   4. The bottom overlay records every observed event (state change, focus,
+ *      blur, transitionStart/End, gestureCancel, coordinator diagnostics)
+ *      with ms timestamps — use it to verify event ordering on-device.
  */
 
 import 'react-native-gesture-handler';
 
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  createNavigationContainerRef,
+  type NavigationState,
+  type PartialState,
+} from '@react-navigation/native';
 import { createStackNavigator, type StackNavigationProp } from '@react-navigation/stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SmoothTaskProvider, useSmoothNavigationContainer } from 'react-native-smooth-task';
+import {
+  SmoothTaskProvider,
+  useSmoothNavigationContainer,
+  useSmoothTask,
+} from 'react-native-smooth-task';
 import { useSmoothStackListeners } from 'react-native-smooth-task/stack';
+import { useSmoothNativeStackListeners } from 'react-native-smooth-task/native-stack';
 
 import { HeavyScreen } from './screens/HeavyScreen';
 import { DetailScreen } from './screens/DetailScreen';
 import { OrdersScreen } from './screens/OrdersScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import {
+  TimelineOverlay,
+  shortRouteKey,
+  timelineLog,
+  wrapScreenListeners,
+} from './timeline';
 
 // --- Param lists --------------------------------------------------------------
 
@@ -61,7 +84,7 @@ const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const RootStack = createStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
 const HomeStack = createStackNavigator<HomeStackParamList>();
-const OrdersStack = createStackNavigator<OrdersStackParamList>();
+const OrdersStack = createNativeStackNavigator<OrdersStackParamList>();
 
 type HomeNav = StackNavigationProp<HomeStackParamList, 'Feed'>;
 type OrdersNav = StackNavigationProp<OrdersStackParamList, 'OrdersList'>;
@@ -87,8 +110,9 @@ function PostRoute({ route }: { route: { params: { postId: string } } }) {
 function HomeStackScreen() {
   // One listener hook per stack navigator. `id` is a diagnostics label.
   const listeners = useSmoothStackListeners({ id: 'home' });
+  const timedListeners = useMemo(() => wrapScreenListeners('home', listeners), [listeners]);
   return (
-    <HomeStack.Navigator screenListeners={listeners}>
+    <HomeStack.Navigator screenListeners={timedListeners}>
       <HomeStack.Screen name="Feed" component={FeedRoute} />
       <HomeStack.Screen name="Post" component={PostRoute} />
     </HomeStack.Navigator>
@@ -96,9 +120,10 @@ function HomeStackScreen() {
 }
 
 function OrdersStackScreen() {
-  const listeners = useSmoothStackListeners({ id: 'orders' });
+  const listeners = useSmoothNativeStackListeners({ id: 'orders' });
+  const timedListeners = useMemo(() => wrapScreenListeners('orders', listeners), [listeners]);
   return (
-    <OrdersStack.Navigator screenListeners={listeners}>
+    <OrdersStack.Navigator screenListeners={timedListeners}>
       <OrdersStack.Screen name="OrdersList" component={OrdersListRoute} />
       <OrdersStack.Screen name="OrderDetail" component={OrderDetailRoute} />
     </OrdersStack.Navigator>
@@ -118,8 +143,9 @@ function MainTabs() {
 
 function Root() {
   const listeners = useSmoothStackListeners({ id: 'root' });
+  const timedListeners = useMemo(() => wrapScreenListeners('root', listeners), [listeners]);
   return (
-    <RootStack.Navigator screenListeners={listeners}>
+    <RootStack.Navigator screenListeners={timedListeners}>
       <RootStack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       <RootStack.Screen
         name="Settings"
@@ -130,6 +156,23 @@ function Root() {
   );
 }
 
+// --- Timeline helpers ----------------------------------------------------------
+
+type NavStateLike = NavigationState | PartialState<NavigationState> | undefined;
+
+/** Walk the focused branch to a readable path like "MainTabs › Orders › OrderDetail". */
+function focusedRoutePath(state: NavStateLike): string {
+  const names: string[] = [];
+  let s = state;
+  while (s && s.routes.length > 0) {
+    const route = s.routes[s.index ?? s.routes.length - 1];
+    if (!route) break;
+    names.push(route.name);
+    s = route.state as NavStateLike;
+  }
+  return names.join(' › ');
+}
+
 // --- App entry -----------------------------------------------------------------
 
 /**
@@ -138,14 +181,43 @@ function Root() {
  * component, never in the component that renders the provider.
  */
 function AppNavigation() {
+  const { diagnostics } = useSmoothTask('AppNavigation');
+
   // Spreads { onReady, onStateChange } onto NavigationContainer.
   // `navigationRef` lets the hook deliver the INITIAL state on ready via
   // navigationRef.current.getRootState() — without it the coordinator waits
   // for the first onStateChange (and emits a `missing-nav-ref` warning).
   const observers = useSmoothNavigationContainer({ navigationRef });
 
+  const timedObservers = useMemo(
+    () => ({
+      onReady: () => {
+        timelineLog('container ready');
+        observers.onReady?.();
+      },
+      onStateChange: (
+        state: Parameters<NonNullable<typeof observers.onStateChange>>[0]
+      ) => {
+        timelineLog(`state-change → ${focusedRoutePath(state)}`);
+        observers.onStateChange?.(state);
+      },
+    }),
+    [observers]
+  );
+
+  // Every coordinator decision (settling, barrier open/close, task lifecycle,
+  // warnings) lands on the timeline next to the raw navigation events.
+  useEffect(
+    () =>
+      diagnostics.subscribe((event) => {
+        const target = shortRouteKey(event.routeKey ?? event.scopeId);
+        timelineLog(`${event.code}${target ? ` ${target}` : ''}`);
+      }),
+    [diagnostics]
+  );
+
   return (
-    <NavigationContainer ref={navigationRef} {...observers}>
+    <NavigationContainer ref={navigationRef} {...timedObservers}>
       <Root />
     </NavigationContainer>
   );
@@ -155,8 +227,15 @@ export default function App() {
   return (
     <SmoothTaskProvider diagnostics={__DEV__}>
       <SafeAreaProvider>
-        <AppNavigation />
+        <View style={styles.root}>
+          <AppNavigation />
+          <TimelineOverlay />
+        </View>
       </SafeAreaProvider>
     </SmoothTaskProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+});

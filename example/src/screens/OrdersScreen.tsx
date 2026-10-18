@@ -12,8 +12,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useIdleTask } from 'react-native-smooth-task/stack';
-import type { TaskHandle } from 'react-native-smooth-task/stack';
+import { useIdleTask } from 'react-native-smooth-task/native-stack';
+import type { TaskHandle } from 'react-native-smooth-task/native-stack';
 
 const ORDERS = Array.from({ length: 40 }, (_, i) => ({
   id: `order-${i}`,

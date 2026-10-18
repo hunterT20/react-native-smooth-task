@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "SmoothTask Example",
+    "slug": "smooth-task-example",
+    "scheme": "smooth-task-example",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {}
+  }
+}

@@ -1,60 +1,86 @@
-# Example app — reference implementation
+# Example app — runnable (Expo SDK 55)
 
-This directory is **not a bootstrapped React Native project** — it is a set of
-reference sources to copy into a real RN app (e.g. one created with
-`npx @react-native-community/cli init` on RN 0.87). There is no
-`android/`/`ios/` here and nothing is installed from this `package.json`; it
-only documents the dependencies a host app needs.
+A real React Native app you can run on a device or emulator to verify
+react-native-smooth-task against **real React Navigation event ordering** —
+the reason it exists.
 
-## What's inside
+Navigation tree deliberately mixes adapters:
 
 ```
-src/
-├── App.tsx                    # provider + NavigationContainer wiring +
-│                              #   RootStack → MainTabs → HomeStack/OrdersStack
-└── screens/
-    ├── HeavyScreen.tsx        # useDeferredMount + skeleton (route 'Feed')
-    ├── DetailScreen.tsx       # fetch-early-render-late via useAfterTransition
-    │                          #   (routes 'Post' + 'OrderDetail')
-    ├── OrdersScreen.tsx       # useIdleTask background analytics batch
-    │                          #   (route 'OrdersList')
-    └── SettingsScreen.tsx     # lightweight modal screen (root stack)
+RootStack  '<root>'      → [ MainTabs, Settings(modal) ]   — JS stack (@react-navigation/stack)
+MainTabs                 → [ Home, Orders ]                — bottom tabs, no adapter
+HomeStack  'tab:Home'    → [ Feed(HeavyScreen), Post ]     — JS stack
+OrdersStack 'tab:Orders' → [ OrdersList, OrderDetail ]     — native stack (@react-navigation/native-stack)
 ```
 
-## Required dependencies in the host app
+## Run it
 
 ```bash
-pnpm add react-native-smooth-task \
-  @react-navigation/native @react-navigation/stack @react-navigation/bottom-tabs \
-  react-native-screens react-native-safe-area-context react-native-gesture-handler
+cd example
+pnpm install
+npx expo install --check   # reconciles native-module versions for your Expo Go
+pnpm start               # scan QR with Expo Go (SDK 55), or press i / a
 ```
 
-Verified against: `react-native` 0.87.1, `react` 19.3.1,
-`@react-navigation/native` 7.5.1, `@react-navigation/stack` 7.12.1,
-`react-native-screens` 4.30.0, `react-native-safe-area-context` 5.10.1,
-`react-native-gesture-handler` 3.3.0. See `../docs/compatibility.md`.
+The library is consumed via `link:../` and Metro resolves its `react-native`
+field straight to `../src` — **no `pnpm build` needed**, and edits to the
+library hot-reload in the app.
 
-## Wiring checklist
+Expo Go runs RN 0.83 (SDK 55), inside the library's peer range
+(`>=0.82 <1`). For FPS benchmarking use a **release** dev build instead —
+dev-mode numbers are not meaningful:
 
-1. Wrap the app in `<SmoothTaskProvider>` (with `diagnostics={__DEV__}` while
-   integrating).
-2. Create a `navigationRef` and pass it to both
-   `useSmoothNavigationContainer({ navigationRef })` and
-   `<NavigationContainer ref={navigationRef}>`, spreading the returned
-   `observers` onto the container.
-3. Add `useSmoothStackListeners({ id })` → `screenListeners` on **every stack
-   navigator** (`RootStack`, `HomeStack`, `OrdersStack` here). Tab navigators
-   need no listeners — their focus comes from the state tree.
-4. Inside screens, import route-scoped hooks from
-   `react-native-smooth-task/stack`.
+```bash
+pnpm add expo-dev-client
+npx expo run:ios --configuration Release
+npx expo run:android --variant release
+```
 
-## What to try
+## Event timeline
 
-- Push `Feed` → the skeleton holds until the transition ends, then the heavy
-  list mounts (watch `[smooth-task] task-started` in the console).
-- Push `Post` → the fetch starts *during* the animation; only the heavy body
-  render waits for settle.
-- Pull-to-refresh on `Orders` → the analytics batch re-runs inside idle
-  callbacks and pauses if you navigate away mid-flight.
-- Background/foreground the app → route-scoped tasks pause while inactive
-  (`pauseInBackground` default).
+The dark overlay at the bottom records every observed event with ms
+timestamps relative to app start; each line is also mirrored to the console
+(`adb logcat | grep "smooth-task trace"`):
+
+```
+[  412ms] state-change → MainTabs › Orders › OrderDetail
+[  415ms] orders transitionStart OrderDetail…
+[  416ms] settling tab:Orders
+[  918ms] orders transitionEnd OrderDetail…
+[  919ms] barrier-closed
+[  921ms] task-started
+```
+
+It captures three sources:
+
+- **container observers** — `ready` / `state-change → <focused route path>`
+- **screen listeners** — `focus` / `blur` / `transitionStart` / `transitionEnd` /
+  `gestureCancel` per navigator label (`root` / `home` / `orders`)
+- **coordinator diagnostics** — `settling`, `barrier-opened`/`closed`,
+  `task-started`/`completed`, `stalled-transition`, `settling-unresolved`, …
+
+Tap `clear` before each navigation to get a clean trace.
+
+## What to verify on device
+
+- **Event ordering**: does `onStateChange` land before `transitionStart`?
+  Does `focus` ever arrive before `transitionStart`? (Either way the route
+  task must not start until `transitionEnd` / `barrier-closed`.)
+- **JS stack vs native stack**: compare ordering on `home` vs `orders`
+  navigators; on Android native-stack `gestureCancel` never fires.
+- **Tab switches** (`MainTabs`, no adapter): routes must still settle —
+  the navNode is gated only by registration fallback until classified
+  non-animated (~300ms silence), then releases; no task should start early.
+- **Cancelled swipe-back** (iOS): `gestureCancel` must keep work blocked
+  until the recovery `transitionEnd`.
+- **Settings modal** (root stack): while it animates in, route-scoped work
+  across the whole tree pauses until the modal's `transitionEnd`.
+
+## Screens
+
+| Screen        | Route                    | Demonstrates                                       |
+| ------------- | ------------------------ | -------------------------------------------------- |
+| HeavyScreen   | `Feed`                   | `useDeferredMount` — skeleton until settled        |
+| DetailScreen  | `Post`, `OrderDetail`    | fetch-early-render-late via `useAfterTransition` + `<DeferredView>` |
+| OrdersScreen  | `OrdersList`             | `useIdleTask` chunked background batch             |
+| SettingsScreen| `Settings`               | root-stack modal → global barrier                  |

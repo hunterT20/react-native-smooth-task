@@ -788,6 +788,15 @@ describe('settling — the state→event ordering gap', () => {
     timers.advance(300); // silence → never-animated → classify + release
     expect(coordinator.isEligible('route:home-feed')).toBe(true);
   });
+
+  // Desired behavior (navigator-ownership-mapping milestone): a registered
+  // adapter on ONE navigator should not gate unrelated navNodes. The current
+  // NavigatorRegistration contract carries no navNode ownership, so
+  // registration is intentionally global — conservative (never early-release)
+  // but it can delay e.g. a tab switch under MainTabs by up to the silence
+  // window when only RootStack has an adapter. Implement only if real-device
+  // traces show the extra latency is harmful.
+  it.todo('does not delay unrelated non-animated tabs');
 });
 
 describe('diagnostic bookkeeping bounds', () => {

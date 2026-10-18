@@ -393,6 +393,12 @@ A few behavioral guarantees worth knowing:
 - **No timer-based guesses.** Barriers close only on real `transitionEnd`
   (or navigator teardown). A barrier stuck open emits a `stalled-transition`
   warning after ~4s — diagnostics only, never auto-released.
+- **Best-effort when events are missing.** With no adapter observed on a
+  navNode, a state change without lifecycle events releases the settling gate
+  after a ~300ms silence window; an observed-animated navNode releases after
+  the ~4s stall window with a `settling-unresolved` warning. These are
+  liveness fallbacks, not proof an animation ended — treat warnings as a
+  signal that transition events are being lost.
 - **Cancelled swipe-backs are safe.** `gestureCancel` holds the barrier open
   until the recovery animation's `transitionEnd` — nothing fires early.
 - **Same-name navigators are safe.** Identities are per-instance; a nested
