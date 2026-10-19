@@ -1,7 +1,16 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "paths": {
+      "react-native-smooth-task": ["../src/index.ts"],
+      "react-native-smooth-task/stack": ["../src/stack.ts"],
+      "react-native-smooth-task/native-stack": ["../src/native-stack.ts"],
+      "@react-navigation/*": ["./node_modules/@react-navigation/*"],
+      "react-native": ["./node_modules/react-native"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
   },
   "include": ["index.js", "src/**/*.ts", "src/**/*.tsx"]
 }

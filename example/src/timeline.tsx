@@ -1,21 +1,29 @@
 /**
  * Event timeline — an in-app recorder for verifying event ordering on a real
- * device. Every observed event is appended with a ms timestamp relative to
- * app start so sequences like
+ * device. Collapsed to a small pill by default so it never blocks the tab
+ * bar or screen content; expanding opens a scrollable log panel anchored to
+ * the top edge (tabs stay tappable while open).
  *
- *   [  412ms] state-change → Orders › OrderDetail
+ * Every observed event is appended with a ms timestamp relative to app
+ * start so sequences like
+ *
+ *   [  412ms] state-change → MainTabs › Orders › OrderDetail
  *   [  415ms] orders transitionStart OrderDetail…
  *   [  416ms] settling tab:Orders
  *   [  918ms] orders transitionEnd OrderDetail…
  *   [  919ms] barrier-closed
  *   [  921ms] task-started
  *
- * are inspectable without attaching a debugger. The same events also go to
- * the console for `adb logcat` / device logs capture.
+ * are inspectable without attaching a debugger. Each line is also mirrored
+ * to the console for `adb logcat` capture — except in record-only mode,
+ * which skips console writes and UI re-renders so the recorder does not
+ * perturb JS-side performance during benchmarks. `export` dumps the
+ * captured events as JSON.
  */
 
-import React, { useRef, useSyncExternalStore } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface TimelineEntry {
   id: number;
@@ -29,11 +37,13 @@ const startedAt = performance.now();
 
 let entries: TimelineEntry[] = [];
 let seq = 0;
+let recordOnly = false;
 const listeners = new Set<() => void>();
 
 export function timelineLog(label: string): void {
   const entry = { id: seq++, at: performance.now() - startedAt, label };
   entries = [...entries.slice(-(MAX_ENTRIES - 1)), entry];
+  if (recordOnly) return;
   for (const l of listeners) l();
   console.log(`[smooth-task trace] [${Math.round(entry.at)}ms] ${label}`);
 }
@@ -41,6 +51,20 @@ export function timelineLog(label: string): void {
 export function clearTimeline(): void {
   entries = [];
   for (const l of listeners) l();
+}
+
+/** Silent capture: events are still recorded but nothing re-renders/logs. */
+export function setRecordOnly(value: boolean): void {
+  recordOnly = value;
+  for (const l of listeners) l();
+}
+
+export function exportTimeline(): string {
+  const json = JSON.stringify(
+    entries.map((e) => ({ ms: Math.round(e.at), event: e.label }))
+  );
+  console.log(`[smooth-task trace export] ${json}`);
+  return json;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -86,15 +110,47 @@ export function wrapScreenListeners<L>(label: string, listeners: L): L {
 
 export function TimelineOverlay(): React.JSX.Element {
   const items = useTimelineEntries();
+  const insets = useSafeAreaInsets();
+  const [expanded, setExpanded] = useState(false);
+  const [silent, setSilent] = useState(recordOnly);
   const listRef = useRef<ScrollView>(null);
 
+  if (!expanded) {
+    return (
+      <View style={[styles.pillWrap, { top: insets.top + 6 }]} pointerEvents="box-none">
+        <Pressable style={styles.pill} onPress={() => setExpanded(true)} hitSlop={6}>
+          <Text style={styles.pillText}>
+            timeline · {items.length}
+            {recordOnly ? ' · rec' : ''}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.overlay} pointerEvents="box-none">
+    <View style={[styles.overlay, { top: insets.top + 6 }]} pointerEvents="box-none">
       <View style={styles.panel}>
         <View style={styles.header}>
-          <Text style={styles.title}>event timeline</Text>
-          <Pressable onPress={clearTimeline} hitSlop={8}>
-            <Text style={styles.clear}>clear</Text>
+          <Text style={styles.title}>timeline · {items.length}</Text>
+          <Pressable
+            hitSlop={8}
+            onPress={() => {
+              const next = !silent;
+              setSilent(next);
+              setRecordOnly(next);
+            }}
+          >
+            <Text style={styles.action}>{silent ? 'rec:only' : 'rec:live'}</Text>
+          </Pressable>
+          <Pressable hitSlop={8} onPress={exportTimeline}>
+            <Text style={styles.action}>export</Text>
+          </Pressable>
+          <Pressable hitSlop={8} onPress={clearTimeline}>
+            <Text style={styles.action}>clear</Text>
+          </Pressable>
+          <Pressable hitSlop={8} onPress={() => setExpanded(false)}>
+            <Text style={styles.action}>close</Text>
           </Pressable>
         </View>
         <ScrollView
@@ -118,17 +174,29 @@ export function TimelineOverlay(): React.JSX.Element {
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: undefined });
 
 const styles = StyleSheet.create({
+  pillWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  pill: {
+    backgroundColor: 'rgba(10, 12, 16, 0.85)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  pillText: { color: '#9aa4b2', fontSize: 11, fontFamily: mono },
   overlay: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
   },
   panel: {
-    height: 200,
+    height: 220,
     backgroundColor: 'rgba(10, 12, 16, 0.92)',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#3a3f4a',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#3a3f4a',
   },
   header: {
     flexDirection: 'row',
@@ -140,7 +208,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#3a3f4a',
   },
   title: { color: '#9aa4b2', fontSize: 11, fontFamily: mono },
-  clear: { color: '#6ea8fe', fontSize: 11, fontFamily: mono },
+  action: { color: '#6ea8fe', fontSize: 11, fontFamily: mono, paddingLeft: 10 },
   list: { flex: 1, paddingHorizontal: 10, paddingVertical: 4 },
   line: { color: '#d6dde6', fontSize: 10, fontFamily: mono, lineHeight: 14 },
   stamp: { color: '#7f8a99' },

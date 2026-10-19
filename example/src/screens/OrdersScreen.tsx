@@ -22,12 +22,17 @@ const ORDERS = Array.from({ length: 40 }, (_, i) => ({
 
 /** Simulated analytics flush of one batch — ~30ms of "work". */
 function flushAnalyticsBatch(batch: string[], signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
     const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
       console.log(`[analytics] flushed ${batch.length} events`);
       resolve();
     }, 30);
-    signal.addEventListener('abort', () => clearTimeout(timer));
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -43,7 +48,12 @@ export function OrdersScreen({ onOpenOrder }: { onOpenOrder: (orderId: string) =
       async (signal) => {
         for (let i = 0; i < ORDERS.length && !signal.aborted; i += 10) {
           const batch = ORDERS.slice(i, i + 10).map((o) => o.id);
-          await flushAnalyticsBatch(batch, signal);
+          try {
+            await flushAnalyticsBatch(batch, signal);
+          } catch {
+            if (!signal.aborted) throw new Error('flush failed');
+            break;
+          }
         }
       },
       { key: 'orders-analytics' } // priority defaults to 'background'

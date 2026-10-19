@@ -40,6 +40,7 @@ import {
   SmoothTaskProvider,
   useSmoothNavigationContainer,
   useSmoothTask,
+  type NavigationContainerObservers,
 } from 'react-native-smooth-task';
 import { useSmoothStackListeners } from 'react-native-smooth-task/stack';
 import { useSmoothNativeStackListeners } from 'react-native-smooth-task/native-stack';
@@ -48,6 +49,8 @@ import { HeavyScreen } from './screens/HeavyScreen';
 import { DetailScreen } from './screens/DetailScreen';
 import { OrdersScreen } from './screens/OrdersScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { LabScreen } from './screens/LabScreen';
+import { BenchmarkScreen, type BenchmarkMode } from './screens/BenchmarkScreen';
 import {
   TimelineOverlay,
   shortRouteKey,
@@ -68,13 +71,16 @@ export type MainTabsParamList = {
 };
 
 export type HomeStackParamList = {
+  Lab: undefined;
   Feed: undefined;
   Post: { postId: string };
+  Benchmark: { mode: BenchmarkMode };
 };
 
 export type OrdersStackParamList = {
   OrdersList: undefined;
   OrderDetail: { orderId: string };
+  OrderDetailStatic: { orderId: string };
 };
 
 // --- Navigators ---------------------------------------------------------------
@@ -103,6 +109,10 @@ function OrderDetailRoute({ route }: { route: { params: { orderId: string } } })
   return <DetailScreen title={`Order ${route.params.orderId}`} seed={route.params.orderId} />;
 }
 
+function BenchmarkRoute({ route }: { route: { params: { mode: BenchmarkMode } } }) {
+  return <BenchmarkScreen route={route} />;
+}
+
 function PostRoute({ route }: { route: { params: { postId: string } } }) {
   return <DetailScreen title={`Post ${route.params.postId}`} seed={route.params.postId} />;
 }
@@ -112,9 +122,11 @@ function HomeStackScreen() {
   const listeners = useSmoothStackListeners({ id: 'home' });
   const timedListeners = useMemo(() => wrapScreenListeners('home', listeners), [listeners]);
   return (
-    <HomeStack.Navigator screenListeners={timedListeners}>
+    <HomeStack.Navigator screenListeners={timedListeners} initialRouteName="Lab">
+      <HomeStack.Screen name="Lab" component={LabScreen} options={{ title: 'Lab' }} />
       <HomeStack.Screen name="Feed" component={FeedRoute} />
       <HomeStack.Screen name="Post" component={PostRoute} />
+      <HomeStack.Screen name="Benchmark" component={BenchmarkRoute} />
     </HomeStack.Navigator>
   );
 }
@@ -126,6 +138,13 @@ function OrdersStackScreen() {
     <OrdersStack.Navigator screenListeners={timedListeners}>
       <OrdersStack.Screen name="OrdersList" component={OrdersListRoute} />
       <OrdersStack.Screen name="OrderDetail" component={OrderDetailRoute} />
+      {/* animation:'none' exercises the never-animated settling tier inside
+          a native-stack that is otherwise observed as animated */}
+      <OrdersStack.Screen
+        name="OrderDetailStatic"
+        component={OrderDetailRoute}
+        options={{ animation: 'none', title: 'Order (no animation)' }}
+      />
     </OrdersStack.Navigator>
   );
 }
@@ -159,6 +178,9 @@ function Root() {
 // --- Timeline helpers ----------------------------------------------------------
 
 type NavStateLike = NavigationState | PartialState<NavigationState> | undefined;
+/** The coordinator's structural state-tree shape (PartialRoute keys are
+ *  optional in React Navigation's types but always present at runtime). */
+type NavTreeState = Parameters<NavigationContainerObservers['onStateChange']>[0];
 
 /** Walk the focused branch to a readable path like "MainTabs › Orders › OrderDetail". */
 function focusedRoutePath(state: NavStateLike): string {
@@ -184,10 +206,13 @@ function AppNavigation() {
   const { diagnostics } = useSmoothTask('AppNavigation');
 
   // Spreads { onReady, onStateChange } onto NavigationContainer.
-  // `navigationRef` lets the hook deliver the INITIAL state on ready via
-  // navigationRef.current.getRootState() — without it the coordinator waits
-  // for the first onStateChange (and emits a `missing-nav-ref` warning).
-  const observers = useSmoothNavigationContainer({ navigationRef });
+  // `getRootState` lets the hook deliver the INITIAL state on ready —
+  // without it the coordinator waits for the first onStateChange (and emits
+  // a `missing-nav-ref` warning). The cast bridges React Navigation's
+  // PartialRoute types (key optional) to the coordinator's state tree.
+  const observers = useSmoothNavigationContainer({
+    getRootState: () => navigationRef.getRootState() as NavTreeState,
+  });
 
   const timedObservers = useMemo(
     () => ({
@@ -195,11 +220,9 @@ function AppNavigation() {
         timelineLog('container ready');
         observers.onReady?.();
       },
-      onStateChange: (
-        state: Parameters<NonNullable<typeof observers.onStateChange>>[0]
-      ) => {
+      onStateChange: (state: Readonly<NavigationState> | undefined) => {
         timelineLog(`state-change → ${focusedRoutePath(state)}`);
-        observers.onStateChange?.(state);
+        observers.onStateChange?.(state as NavTreeState);
       },
     }),
     [observers]

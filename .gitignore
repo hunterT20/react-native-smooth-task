@@ -5,3 +5,4 @@ coverage/
 .DS_Store
 pnpm-lock.yaml.tmp
 example/node_modules/
+example/dist/

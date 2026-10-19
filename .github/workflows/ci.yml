@@ -34,3 +34,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test tests/unit tests/integration
+
+  # Keeps the runnable example honest: typecheck (TS resolves the library
+  # source via tsconfig paths — also validates src/ under RN 0.83 types) and
+  # bundle it the way Metro does. A green bundle does not prove the native
+  # app runs; it only proves the JS graph compiles.
+  example-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: example/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: example
+      - run: pnpm typecheck
+        working-directory: example
+      - run: npx expo export --platform android --output-dir dist
+        working-directory: example
