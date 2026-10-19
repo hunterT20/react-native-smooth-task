@@ -86,16 +86,19 @@ line then performs the action — giving a complete before/after trace:
 Four gating strategies for heavy content during a push, selected from the
 Lab:
 
-| Mode | Strategy                                   |
-| ---- | ------------------------------------------ |
-| A    | immediate mount (baseline)                 |
-| B    | `setTimeout(350)` — guess the animation    |
-| C    | `InteractionManager.runAfterInteractions`  |
-| D    | `useDeferredMount` (smooth-task)           |
+| Mode | Strategy                                             |
+| ---- | ---------------------------------------------------- |
+| A    | immediate mount (baseline)                           |
+| B    | `setTimeout(350)` — guess the animation              |
+| C    | `navigation.addListener('transitionEnd')` — manual   |
+| D    | `useDeferredMount` (smooth-task)                     |
 
-The screen reports mount→content-ready latency and rAF frames observed in
-that window (`latency/16.7 − frames ≈ missed frame slots` — a JS-side
-approximation, compare across modes only, in release builds).
+Each gate is a separate component so only the active strategy's hooks run —
+A/B/C never touch the scheduler. The screen reports mount→content-ready
+latency and rAF frames observed in that window (`latency/16.7 − frames ≈
+rAF slots missed`). These are JS-side approximations — `onLayout` is not
+paint, and the rAF probe starts on first effect — use them comparatively
+across modes in release builds, not as UI dropped-frame counts.
 
 ## What to verify on device
 
@@ -109,8 +112,11 @@ approximation, compare across modes only, in release builds).
   global-registration imprecision), subsequent switches release instantly.
 - **Cancelled swipe-back** (iOS): `gestureCancel` must keep work blocked
   until the recovery `transitionEnd`.
-- **`animation:'none'` push**: gate should release via silence/focus-only
-  classification rather than waiting for a `transitionEnd` that never comes.
+- **`animation:'none'` push** (open question the trace must answer): if the
+  platform still emits `transitionEnd`, the gate releases on the event. If
+  it does not, an already-animated navNode holds until the ~4s
+  `settling-unresolved` fallback — watch for that warning; if it fires, an
+  explicit non-animated path needs design.
 
 ## Screens
 

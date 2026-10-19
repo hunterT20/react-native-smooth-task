@@ -24,7 +24,7 @@
 
 import 'react-native-gesture-handler';
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
@@ -39,7 +39,6 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   SmoothTaskProvider,
   useSmoothNavigationContainer,
-  useSmoothTask,
   type NavigationContainerObservers,
 } from 'react-native-smooth-task';
 import { useSmoothStackListeners } from 'react-native-smooth-task/stack';
@@ -203,8 +202,6 @@ function focusedRoutePath(state: NavStateLike): string {
  * component, never in the component that renders the provider.
  */
 function AppNavigation() {
-  const { diagnostics } = useSmoothTask('AppNavigation');
-
   // Spreads { onReady, onStateChange } onto NavigationContainer.
   // `getRootState` lets the hook deliver the INITIAL state on ready —
   // without it the coordinator waits for the first onStateChange (and emits
@@ -228,17 +225,6 @@ function AppNavigation() {
     [observers]
   );
 
-  // Every coordinator decision (settling, barrier open/close, task lifecycle,
-  // warnings) lands on the timeline next to the raw navigation events.
-  useEffect(
-    () =>
-      diagnostics.subscribe((event) => {
-        const target = shortRouteKey(event.routeKey ?? event.scopeId);
-        timelineLog(`${event.code}${target ? ` ${target}` : ''}`);
-      }),
-    [diagnostics]
-  );
-
   return (
     <NavigationContainer ref={navigationRef} {...timedObservers}>
       <Root />
@@ -248,7 +234,17 @@ function AppNavigation() {
 
 export default function App() {
   return (
-    <SmoothTaskProvider diagnostics={__DEV__}>
+    // Custom diagnostics sink → the timeline recorder. In record-only mode
+    // timelineLog skips both re-render notifications and console writes, so
+    // benchmarks get a genuinely silent runtime.
+    <SmoothTaskProvider
+      diagnostics={{
+        emit: (event) => {
+          const target = shortRouteKey(event.routeKey ?? event.scopeId);
+          timelineLog(`${event.code}${target ? ` ${target}` : ''}`);
+        },
+      }}
+    >
       <SafeAreaProvider>
         <View style={styles.root}>
           <AppNavigation />

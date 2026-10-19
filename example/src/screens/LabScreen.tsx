@@ -154,8 +154,8 @@ export function LabScreen() {
       </Section>
 
       <Text style={styles.legend}>
-        A = immediate · B = setTimeout(350) · C = InteractionManager.runAfterInteractions · D =
-        smooth-task useDeferredMount
+        A = immediate · B = setTimeout(350) · C = addListener('transitionEnd') · D = smooth-task
+        useDeferredMount
       </Text>
     </ScrollView>
   );

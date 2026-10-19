@@ -5,32 +5,97 @@
  *   A  immediate          — heavy body mounts with the screen (baseline)
  *   B  fixed delay        — setTimeout(350ms), the "guess the animation
  *                           length" approach
- *   C  manual settle      — InteractionManager.runAfterInteractions
+ *   C  manual settle      — navigation.addListener('transitionEnd'), the
+ *                           hand-rolled equivalent of smooth-task gating
  *   D  smooth-task        — useDeferredMount (settled-evidence gating)
  *
+ * Each gate is its own component so only the active strategy's hooks run —
+ * e.g. A/B/C never mount useDeferredMount, so the Scheduler stays out of
+ * the baseline measurements.
+ *
  * Measurements (approximate, JS-side):
- *   latency  — ms from screen mount until the heavy body finishes layout.
- *   frames   — requestAnimationFrame callbacks observed in that window.
- *              rAF fires once per render pass on the JS thread, so
- *              latency/16.7 − frames ≈ dropped frame slots. This is not a
- *              UI-thread FPS counter — use it comparatively across modes
- *              in a RELEASE build, never in dev mode.
+ *   latency    — ms from screen mount until the heavy body finishes layout.
+ *                onLayout ≠ paint; use comparatively across modes.
+ *   rAF frames — requestAnimationFrame callbacks observed in that window.
+ *                The probe starts on first effect, so it may miss part of
+ *                the initial commit. latency/16.7 − frames ≈ rAF slots the
+ *                JS thread missed — NOT a UI-thread dropped-frame counter.
+ *                Compare across modes only, in RELEASE builds.
  *
  * For clean traces run with the timeline in record-only mode: the recorder
  * then performs zero re-renders and zero console writes.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  InteractionManager,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
 import { useDeferredMount } from 'react-native-smooth-task/stack';
+import type { HomeStackParamList } from '../App';
 
 export type BenchmarkMode = 'A' | 'B' | 'C' | 'D';
+
+// --- Gating gates ---------------------------------------------------------------
+
+interface GateProps {
+  onReady(): void;
+}
+
+/** Mode A — release immediately on mount. */
+function GateA({ onReady }: GateProps) {
+  useEffect(() => {
+    onReady();
+  }, [onReady]);
+  return null;
+}
+
+/** Mode B — fixed 350ms guess at the animation duration. */
+function GateB({ onReady }: GateProps) {
+  useEffect(() => {
+    const timer = setTimeout(onReady, 350);
+    return () => clearTimeout(timer);
+  }, [onReady]);
+  return null;
+}
+
+/** Mode C — wait for the navigator's own transitionEnd event. */
+function GateC({ onReady }: GateProps) {
+  const navigation = useNavigation<StackNavigationProp<HomeStackParamList, 'Benchmark'>>();
+  useEffect(() => {
+    // Screen-level listener: fires once when THIS screen's push animation
+    // completes. Attached during mount, i.e. well before transitionEnd —
+    // so there is no race where the event was missed. Note this only knows
+    // about THIS navigator's event; nested/ancestor barriers are invisible
+    // to it (exactly the gap smooth-task's coordinator exists to close).
+    return navigation.addListener('transitionEnd', () => onReady());
+  }, [navigation, onReady]);
+  return null;
+}
+
+/** Mode D — smooth-task settled evidence. */
+function GateD({ onReady }: GateProps) {
+  const deferredReady = useDeferredMount();
+  useEffect(() => {
+    if (deferredReady) onReady();
+  }, [deferredReady, onReady]);
+  return null;
+}
+
+const GATES: Record<BenchmarkMode, React.ComponentType<GateProps>> = {
+  A: GateA,
+  B: GateB,
+  C: GateC,
+  D: GateD,
+};
+
+const MODE_LABELS: Record<BenchmarkMode, string> = {
+  A: 'immediate',
+  B: 'setTimeout(350)',
+  C: "addListener('transitionEnd')",
+  D: 'useDeferredMount',
+};
+
+// --- Heavy workload ---------------------------------------------------------------
 
 /** Deliberately visible work: prime sieve ≈ tens of ms of pure JS. */
 function busyWork(limit: number): number {
@@ -78,20 +143,17 @@ function HeavyBody({ onLaidOut }: { onLaidOut: () => void }) {
   );
 }
 
-const MODE_LABELS: Record<BenchmarkMode, string> = {
-  A: 'immediate',
-  B: 'setTimeout(350)',
-  C: 'runAfterInteractions',
-  D: 'useDeferredMount',
-};
+// --- Screen -----------------------------------------------------------------------
 
 export function BenchmarkScreen({ route }: { route: { params: { mode: BenchmarkMode } } }) {
   const mode = route.params.mode;
-  const deferredReady = useDeferredMount();
-  const [ready, setReady] = useState(mode === 'A');
+  const [ready, setReady] = useState(false);
   const [result, setResult] = useState<{ latency: number; frames: number } | null>(null);
   const startedAt = useRef(performance.now());
   const frames = useRef(0);
+
+  const onReady = useCallback(() => setReady(true), []);
+  const Gate = GATES[mode];
 
   // rAF probe — counts JS frame callbacks until the result is captured.
   useEffect(() => {
@@ -105,29 +167,12 @@ export function BenchmarkScreen({ route }: { route: { params: { mode: BenchmarkM
     return () => cancelAnimationFrame(raf);
   }, [result]);
 
-  // Gating strategy under test.
-  useEffect(() => {
-    if (mode === 'B') {
-      const timer = setTimeout(() => setReady(true), 350);
-      return () => clearTimeout(timer);
-    }
-    if (mode === 'C') {
-      const handle = InteractionManager.runAfterInteractions(() => setReady(true));
-      return () => handle.cancel();
-    }
-    return undefined;
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode === 'D' && deferredReady) setReady(true);
-  }, [mode, deferredReady]);
-
   const onLaidOut = () =>
     setResult((prev) =>
       prev ?? { latency: Math.round(performance.now() - startedAt.current), frames: frames.current }
     );
 
-  const dropped = result
+  const missed = result
     ? Math.max(0, Math.round(result.latency / 16.7) - result.frames)
     : null;
 
@@ -139,13 +184,14 @@ export function BenchmarkScreen({ route }: { route: { params: { mode: BenchmarkM
         </Text>
         {result ? (
           <Text style={styles.headerMeta}>
-            content ready at +{result.latency}ms · {result.frames} rAF frames · ~{dropped} frame
-            slots missed
+            content ready at +{result.latency}ms · {result.frames} rAF frames · ~{missed} rAF
+            slots missed (approx.)
           </Text>
         ) : (
           <Text style={styles.headerMeta}>measuring…</Text>
         )}
       </View>
+      {!ready && <Gate onReady={onReady} />}
       {ready ? (
         <HeavyBody onLaidOut={onLaidOut} />
       ) : (
