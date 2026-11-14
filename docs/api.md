@@ -422,7 +422,8 @@ a task cancelled before it starts is guaranteed never to run.
 
 ## Diagnostic codes
 
-Emitted through the `diagnostics` provider prop / `context.diagnostics`:
+Emitted through the `diagnostics` provider prop / `context.diagnostics`. The same list is
+exported as `DIAGNOSTIC_CODES` (and the `DiagnosticCode` union type) from the root entry:
 
 | Code                                                                    | Level | Meaning                                                                                                                             |
 | ----------------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- |

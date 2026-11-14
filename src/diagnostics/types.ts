@@ -7,10 +7,8 @@ export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface DiagnosticEvent {
   level: DiagnosticLevel;
   /**
-   * Stable machine-readable code, e.g.:
-   * 'task-scheduled' | 'task-started' | 'task-completed' | 'task-failed'
-   * | 'task-cancelled' | 'barrier-opened' | 'barrier-closed' | 'stalled-task'
-   * | 'missing-provider' | 'missing-adapter' | 'untracked-route'
+   * Stable machine-readable code. The full list of emitted codes is
+   * `DIAGNOSTIC_CODES` / `DiagnosticCode` in `./codes.ts`.
    */
   code: string;
   message: string;

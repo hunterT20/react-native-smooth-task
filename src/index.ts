@@ -18,6 +18,8 @@ export type {
 } from './types';
 
 export type { DiagnosticEvent, DiagnosticLevel, DiagnosticsSink } from './diagnostics/types';
+export { DIAGNOSTIC_CODES } from './diagnostics/codes';
+export type { DiagnosticCode } from './diagnostics/codes';
 
 export type {
   SmoothTaskContextValue,
