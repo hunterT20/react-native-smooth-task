@@ -34,6 +34,7 @@ import type {
   TimerHost,
 } from './types';
 import { createDefaultTimerHost } from './Hosts';
+import { isThenable, scopedDedupeKey } from './dedupe';
 
 const DEFAULT_MAX_TASKS_PER_TURN = 8;
 
@@ -98,14 +99,12 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
     }
   }
 
-  /** Dedupe index key — scope-scoped, mode-agnostic ("latest wins"). */
-  function dedupeKey(scopeId: ScopeId, key: string): string {
-    return JSON.stringify([scopeId, key]);
-  }
-
   function forgetPendingKey(task: ScheduledTask): void {
-    if (task.key !== undefined && pendingKeys.get(dedupeKey(task.scopeId, task.key)) === task.id) {
-      pendingKeys.delete(dedupeKey(task.scopeId, task.key));
+    if (
+      task.key !== undefined &&
+      pendingKeys.get(scopedDedupeKey(task.scopeId, task.key)) === task.id
+    ) {
+      pendingKeys.delete(scopedDedupeKey(task.scopeId, task.key));
     }
   }
 
@@ -187,7 +186,7 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
       settleFailed(task, error);
       return true;
     }
-    if (result != null && typeof result.then === 'function') {
+    if (isThenable(result)) {
       result.then(
         () => settleCompleted(task),
         (rejection: unknown) => settleFailed(task, rejection)
@@ -306,7 +305,7 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
     // Dedupe: a pending task with the same scope+key is cancelled —
     // latest wins. Running tasks are never deduped.
     if (task.key !== undefined) {
-      const indexKey = dedupeKey(scopeId, task.key);
+      const indexKey = scopedDedupeKey(scopeId, task.key);
       const previousId = pendingKeys.get(indexKey);
       if (previousId !== undefined) {
         const previous = liveTasks.get(previousId);
