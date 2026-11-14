@@ -2,23 +2,12 @@
  * App-scope hooks: useDeferredMount, useAfterTransition, useIdleTask,
  * DeferredView (root entry — APP_SCOPE_ID).
  *
- * Timing note: these tests run against the real TaskScheduler when it exists
- * (prefer-real mocks in ./fakes). A real impl legitimately starts eligible
- * app-scope tasks inside the same awaited act() turn, so assertions that a
- * task is "still pending" are only deterministic under the flush-driven fake
- * — they are guarded with isFakeScheduler. Deterministic pending-state
- * coverage (gate blocked) lives in routeScoped.test.tsx.
+ * Timing note: the real TaskScheduler starts an eligible app-scope task
+ * synchronously when it is scheduled, so pre-run ("still pending")
+ * assertions hold the gate blocked with useBlockedGate() and release it.
  */
 
-jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () =>
-  jest.requireActual('./fakes').navigationTypesModule()
-);
-jest.mock('../../../src/diagnostics/types', () =>
-  jest.requireActual('./fakes').diagnosticsTypesModule()
-);
-
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Text } from 'react-native';
 import { act, render, renderHook, screen } from '@testing-library/react-native';
 import { useSmoothTask } from '../../../src/react/SmoothTaskContext';
@@ -27,19 +16,17 @@ import { useAfterTransition } from '../../../src/react/useAfterTransition';
 import { useIdleTask } from '../../../src/react/useIdleTask';
 import { DeferredView } from '../../../src/react/DeferredView';
 import type { TaskCallback } from '../../../src/types';
-import { isFakeScheduler } from './fakes';
-import { pump, twoRouteState, wrapper } from './harness';
+import { pump, twoRouteState, useBlockedGate, wrapper } from './harness';
 
 describe('useDeferredMount (app scope)', () => {
   it('is false until the scheduled task runs, then true', async () => {
     const { result } = await renderHook(
-      () => ({ ready: useDeferredMount(), ctx: useSmoothTask() }),
+      () => ({ release: useBlockedGate(), ready: useDeferredMount() }),
       { wrapper }
     );
-    if (isFakeScheduler(result.current.ctx.scheduler)) {
-      // flush-driven fake: task is still pending before pump
-      expect(result.current.ready).toBe(false);
-    }
+    await pump();
+    expect(result.current.ready).toBe(false); // negative: gate blocked → no run
+    await result.current.release();
     await pump();
     expect(result.current.ready).toBe(true);
   });
@@ -71,29 +58,29 @@ describe('useDeferredMount (app scope)', () => {
     await pump();
     expect(first.result.current).toBe(true);
     await first.unmount();
-    const second = await renderHook(() => ({ ready: useDeferredMount(), ctx: useSmoothTask() }), {
-      wrapper,
-    });
-    if (isFakeScheduler(second.result.current.ctx.scheduler)) {
-      expect(second.result.current.ready).toBe(false);
-    }
+    const second = await renderHook(
+      () => ({ release: useBlockedGate(), ready: useDeferredMount() }),
+      { wrapper }
+    );
+    await pump();
+    expect(second.result.current.ready).toBe(false); // fresh mount starts unready
+    await second.result.current.release();
     await pump();
     expect(second.result.current.ready).toBe(true);
   });
 
   it('cancels the pending task on unmount (Invariant B)', async () => {
     const { result, unmount } = await renderHook(
-      () => ({ ready: useDeferredMount(), ctx: useSmoothTask() }),
+      () => ({ release: useBlockedGate(), ready: useDeferredMount(), ctx: useSmoothTask() }),
       { wrapper }
     );
     const scheduler = result.current.ctx.scheduler;
-    if (isFakeScheduler(scheduler)) {
-      expect(scheduler.getPendingCount()).toBe(1);
-    }
+    expect(scheduler.getPendingCount()).toBe(1);
     await unmount();
     await pump();
     // nothing pending nor running for the unmounted component
     expect(scheduler.getPendingCount()).toBe(0);
+    expect(result.current.ready).toBe(false);
   });
 });
 
@@ -101,12 +88,12 @@ describe('useAfterTransition (app scope)', () => {
   it('runs the callback once when eligible', async () => {
     const cb = jest.fn();
     const { result } = await renderHook(
-      () => ({ ctx: useSmoothTask(), run: useAfterTransition(cb) }),
+      () => ({ release: useBlockedGate(), run: useAfterTransition(cb) }),
       { wrapper }
     );
-    if (isFakeScheduler(result.current.ctx.scheduler)) {
-      expect(cb).not.toHaveBeenCalled();
-    }
+    await pump();
+    expect(cb).not.toHaveBeenCalled(); // negative: gate blocked → no run
+    await result.current.release();
     await pump();
     expect(cb).toHaveBeenCalledTimes(1);
     await pump();
@@ -133,18 +120,18 @@ describe('useAfterTransition (app scope)', () => {
     const first = jest.fn();
     const second = jest.fn();
     const { result, rerender } = await renderHook(
-      ({ cb }: { cb: TaskCallback }) => ({ ctx: useSmoothTask(), run: useAfterTransition(cb) }),
+      ({ cb }: { cb: TaskCallback }) => ({
+        release: useBlockedGate(),
+        run: useAfterTransition(cb),
+      }),
       { wrapper, initialProps: { cb: first as TaskCallback } }
     );
     await rerender({ cb: second });
+    await result.current.release();
     await pump();
-    // exactly one run total; under the flush-driven fake the task ran after
-    // the rerender, so it must be the *latest* callback
-    expect(first.mock.calls.length + second.mock.calls.length).toBe(1);
-    if (isFakeScheduler(result.current.ctx.scheduler)) {
-      expect(first).not.toHaveBeenCalled();
-      expect(second).toHaveBeenCalledTimes(1);
-    }
+    // the task was still pending at rerender, so it runs the *latest* callback
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   it('routes callback errors to onError and keeps going', async () => {
@@ -170,16 +157,16 @@ describe('useAfterTransition (app scope)', () => {
   it('never runs a pending task after unmount (Invariant B)', async () => {
     const cb = jest.fn();
     const { result, unmount } = await renderHook(
-      () => ({ ctx: useSmoothTask(), run: useAfterTransition(cb) }),
+      () => ({ release: useBlockedGate(), ctx: useSmoothTask(), run: useAfterTransition(cb) }),
       { wrapper }
     );
     const scheduler = result.current.ctx.scheduler;
+    expect(scheduler.getPendingCount()).toBe(1);
     await unmount();
+    await result.current.release();
     await pump();
-    if (isFakeScheduler(scheduler)) {
-      // the task was still pending when unmounted → cancel prevented the run
-      expect(cb).not.toHaveBeenCalled();
-    }
+    // the task was still pending when unmounted → cancel prevented the run
+    expect(cb).not.toHaveBeenCalled();
     expect(scheduler.getPendingCount()).toBe(0);
   });
 
@@ -278,26 +265,23 @@ describe('useIdleTask (app scope)', () => {
 
 describe('DeferredView (app scope)', () => {
   it('renders the fallback until ready, then children — permanently', async () => {
-    let scheduler: unknown;
-    const Grab = ({ children }: { children?: React.ReactNode }) => {
-      const s = useSmoothTask().scheduler;
-      useEffect(() => {
-        scheduler = s;
-      }, [s]);
+    let release: (() => Promise<void>) | undefined;
+    const BlockGate = ({ children }: { children?: React.ReactNode }) => {
+      release = useBlockedGate();
       return <>{children}</>;
     };
     await render(
-      <Grab>
+      <BlockGate>
         <DeferredView fallback={<Text>loading</Text>}>
           <Text>content</Text>
         </DeferredView>
-      </Grab>,
+      </BlockGate>,
       { wrapper }
     );
-    if (isFakeScheduler(scheduler)) {
-      expect(screen.queryByText('loading')).toBeTruthy();
-      expect(screen.queryByText('content')).toBeNull();
-    }
+    await pump();
+    expect(screen.queryByText('loading')).toBeTruthy();
+    expect(screen.queryByText('content')).toBeNull();
+    await release!();
     await pump();
     expect(screen.queryByText('content')).toBeTruthy();
     expect(screen.queryByText('loading')).toBeNull();

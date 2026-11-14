@@ -83,7 +83,7 @@ describe('createConsoleDiagnosticsSink', () => {
     try {
       const sink = createConsoleDiagnosticsSink(() => 7);
       sink.emit(makeEvent({ level: 'error', code: 'task-failed' }));
-      sink.emit(makeEvent({ level: 'warn', code: 'stalled-task' }));
+      sink.emit(makeEvent({ level: 'warn', code: 'stalled-transition' }));
       sink.emit(makeEvent({ level: 'info', code: 'info-x' }));
       sink.emit(makeEvent({ level: 'debug', code: 'task-scheduled' }));
 

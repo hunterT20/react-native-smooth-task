@@ -36,6 +36,7 @@ import {
   type ScopeId,
   type TimerHost,
 } from '../core/types';
+import type { DiagnosticCode } from '../diagnostics/codes';
 import type { DiagnosticLevel, DiagnosticsSink } from '../diagnostics/types';
 import { BarrierRegistry } from './BarrierRegistry';
 import { RouteRegistry } from './RouteRegistry';
@@ -92,6 +93,20 @@ interface FocusHint {
   readonly at: number;
 }
 
+/**
+ * Per-navNode settling classification. 'unobserved': no lifecycle event
+ * yet; 'observed': emitted focus/blur only; 'animated': emitted a
+ * transition-family event; 'non-animated': focus changes provably arrive
+ * without transitions.
+ */
+type NavNodeClass = 'unobserved' | 'observed' | 'animated' | 'non-animated';
+
+interface NavNodeSettling {
+  cls: NavNodeClass;
+  /** Silence-timer handle while awaiting transition evidence. */
+  settlingHandle?: unknown;
+}
+
 export function createNavigationCoordinator(
   deps: NavigationCoordinatorDeps = {}
 ): NavigationCoordinator {
@@ -106,7 +121,7 @@ export function createNavigationCoordinator(
 
   const emit = (
     level: DiagnosticLevel,
-    code: string,
+    code: DiagnosticCode,
     message: string,
     extra?: { routeKey?: string; scopeId?: string; details?: Record<string, unknown> }
   ): void => {
@@ -138,14 +153,11 @@ export function createNavigationCoordinator(
   /** `${kind}:${routeKey}` → buffered event awaiting a resolvable navNode. */
   const bufferedEvents = new Map<string, BufferedEvent>();
   const focusHints = new Map<string, FocusHint>();
-  /** navNodeId → silence-timer handle while awaiting transition evidence. */
-  const settlingNavNodes = new Map<string, unknown>();
-  /** navNodeIds that ever emitted a transition-family event. */
-  const animatedNavNodes = new Set<string>();
-  /** navNodeIds that emitted any lifecycle event (incl. focus/blur). */
-  const observedNavNodes = new Set<string>();
-  /** navNodeIds whose focus changes provably arrive without transitions. */
-  const nonAnimatedNavNodes = new Set<string>();
+  /**
+   * navNodeId → settling classification plus the silence-timer handle while
+   * awaiting transition evidence. Absent entries are 'unobserved'.
+   */
+  const navNodeState = new Map<string, NavNodeSettling>();
   const warnedUntrackedRoutes = new Set<string>();
   const warnedUnknownScopePrefixes = new Set<string>();
 
@@ -220,15 +232,58 @@ export function createNavigationCoordinator(
 
   // --- settling (state→event ordering gap) --------------------------------
 
+  function classOf(navNodeId: string): NavNodeClass {
+    return navNodeState.get(navNodeId)?.cls ?? 'unobserved';
+  }
+
+  function isSettling(navNodeId: string): boolean {
+    return navNodeState.get(navNodeId)?.settlingHandle !== undefined;
+  }
+
+  function setClass(navNodeId: string, cls: NavNodeClass): void {
+    const entry = navNodeState.get(navNodeId);
+    if (entry !== undefined) entry.cls = cls;
+    else navNodeState.set(navNodeId, { cls });
+  }
+
+  /** Emitted a lifecycle event (incl. focus/blur); never downgrades. */
+  function markObserved(navNodeId: string): void {
+    if (classOf(navNodeId) === 'unobserved') setClass(navNodeId, 'observed');
+  }
+
+  /** Emitted a transition-family event — overrides any prior class. */
+  function markAnimated(navNodeId: string): void {
+    setClass(navNodeId, 'animated');
+  }
+
+  /** Focus changes provably arrive without transitions. */
+  function markNonAnimated(navNodeId: string): void {
+    setClass(navNodeId, 'non-animated');
+  }
+
+  /** Drops the settling handle; prunes the entry when nothing else is known. */
+  function takeSettlingHandle(navNodeId: string): unknown {
+    const entry = navNodeState.get(navNodeId);
+    const handle = entry?.settlingHandle;
+    if (entry === undefined || handle === undefined) return undefined;
+    delete entry.settlingHandle;
+    if (entry.cls === 'unobserved') navNodeState.delete(navNodeId);
+    return handle;
+  }
+
   function clearSettling(navNodeId: string, via: string): boolean {
-    const handle = settlingNavNodes.get(navNodeId);
+    const handle = takeSettlingHandle(navNodeId);
     if (handle === undefined) return false;
     timers.clearTimeout(handle);
-    settlingNavNodes.delete(navNodeId);
     emit('debug', 'settling-cleared', `navigator '${navNodeId}' settling cleared (${via})`, {
       details: { navNodeId, via },
     });
     return true;
+  }
+
+  function purgeNavNode(navNodeId: string): void {
+    clearSettling(navNodeId, 'navnode-purged');
+    navNodeState.delete(navNodeId);
   }
 
   /**
@@ -249,38 +304,39 @@ export function createNavigationCoordinator(
    * genuine evidence it does not animate.
    */
   function markSettling(navNodeId: string): void {
-    if (settlingNavNodes.has(navNodeId)) return;
+    if (isSettling(navNodeId)) return;
     if (barriers.hasOpenBarrier(navNodeId)) return;
-    if (nonAnimatedNavNodes.has(navNodeId)) return;
-    if (navigators.size === 0 && !observedNavNodes.has(navNodeId)) return;
-    const silenceMs = animatedNavNodes.has(navNodeId) ? stallWarningMs : SETTLING_SILENCE_MS;
-    settlingNavNodes.set(
-      navNodeId,
-      timers.setTimeout(() => {
-        if (!settlingNavNodes.delete(navNodeId)) return;
-        if (animatedNavNodes.has(navNodeId)) {
-          // One silent change must not poison an animated navNode for later
-          // transitions — keep it animated, but release (liveness) and warn.
-          emit(
-            'warn',
-            'settling-unresolved',
-            `navigator '${navNodeId}' changed focus but no transition/focus events ` +
-              `arrived within ${silenceMs}ms — releasing anyway; transition events ` +
-              'may have been lost',
-            { details: { navNodeId, silenceMs } }
-          );
-        } else {
-          nonAnimatedNavNodes.add(navNodeId);
-          emit(
-            'debug',
-            'settling-elapsed',
-            `navigator '${navNodeId}' changed focus with no transition events — assuming non-animated`,
-            { details: { navNodeId } }
-          );
-        }
-        notify();
-      }, silenceMs)
-    );
+    const cls = classOf(navNodeId);
+    if (cls === 'non-animated') return;
+    if (navigators.size === 0 && cls === 'unobserved') return;
+    const silenceMs = cls === 'animated' ? stallWarningMs : SETTLING_SILENCE_MS;
+    const handle = timers.setTimeout(() => {
+      if (takeSettlingHandle(navNodeId) === undefined) return;
+      if (classOf(navNodeId) === 'animated') {
+        // One silent change must not poison an animated navNode for later
+        // transitions — keep it animated, but release (liveness) and warn.
+        emit(
+          'warn',
+          'settling-unresolved',
+          `navigator '${navNodeId}' changed focus but no transition events ` +
+            `arrived within ${silenceMs}ms — releasing anyway; transition events ` +
+            'may have been lost',
+          { details: { navNodeId, silenceMs } }
+        );
+      } else {
+        markNonAnimated(navNodeId);
+        emit(
+          'debug',
+          'settling-elapsed',
+          `navigator '${navNodeId}' changed focus with no transition events — assuming non-animated`,
+          { details: { navNodeId } }
+        );
+      }
+      notify();
+    }, silenceMs);
+    const entry = navNodeState.get(navNodeId);
+    if (entry !== undefined) entry.settlingHandle = handle;
+    else navNodeState.set(navNodeId, { cls, settlingHandle: handle });
     emit(
       'debug',
       'settling',
@@ -328,9 +384,7 @@ export function createNavigationCoordinator(
   ): boolean {
     // Any transition-family event proves this navNode animates — settle the
     // ordering gap and (re)classify it as animated.
-    observedNavNodes.add(navNodeId);
-    animatedNavNodes.add(navNodeId);
-    nonAnimatedNavNodes.delete(navNodeId);
+    markAnimated(navNodeId);
     // Clearing the settling gate changes eligibility even when the barrier
     // operation below is a no-op (e.g. transitionEnd with no matching
     // transitionStart) — the caller must still broadcast.
@@ -410,10 +464,7 @@ export function createNavigationCoordinator(
     for (const navNodeId of result.deadNavNodeIds) {
       barriers.close(navNodeId, 'navnode-purged');
       registry.purgeNavNode(navNodeId);
-      clearSettling(navNodeId, 'navnode-purged');
-      observedNavNodes.delete(navNodeId);
-      animatedNavNodes.delete(navNodeId);
-      nonAnimatedNavNodes.delete(navNodeId);
+      purgeNavNode(navNodeId);
     }
     replayBufferedEvents();
 
@@ -494,7 +545,7 @@ export function createNavigationCoordinator(
     // evidence: React Navigation may deliver `focus` before
     // `transitionStart`, so clearing the gate here could run tasks
     // mid-transition — the race settling exists to close.
-    if (navNodeId !== undefined) observedNavNodes.add(navNodeId);
+    if (navNodeId !== undefined) markObserved(navNodeId);
   }
 
   function routeFocused(routeKey: string): void {
@@ -512,7 +563,7 @@ export function createNavigationCoordinator(
     const hasPendingTransition =
       record !== undefined &&
       record.navNodeIdsOnPath.some(
-        (navNodeId) => barriers.hasOpenBarrier(navNodeId) || settlingNavNodes.has(navNodeId)
+        (navNodeId) => barriers.hasOpenBarrier(navNodeId) || isSettling(navNodeId)
       );
     const settled = exists && focusedOnPath && !hasPendingTransition && ready && appActive;
     return {
@@ -587,10 +638,10 @@ export function createNavigationCoordinator(
       timers.clearTimeout(event.expiryHandle);
     }
     bufferedEvents.clear();
-    for (const handle of settlingNavNodes.values()) {
-      timers.clearTimeout(handle);
+    for (const { settlingHandle } of navNodeState.values()) {
+      if (settlingHandle !== undefined) timers.clearTimeout(settlingHandle);
     }
-    settlingNavNodes.clear();
+    navNodeState.clear();
     barriers.dispose();
     listeners.clear();
     navigators.clear();

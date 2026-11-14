@@ -64,8 +64,9 @@ export function DetailScreen({ title, seed }: { title: string; seed: string }) {
     const controller = new AbortController();
     fetchPost(seed, controller.signal)
       .then(setData)
-      .catch(() => {
-        /* aborted on unmount / cancelled */
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        console.warn(`[DetailScreen] failed to fetch post "${seed}"`, error);
       });
     return () => controller.abort();
   }, [seed]);

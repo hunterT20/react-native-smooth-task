@@ -50,8 +50,8 @@ export function OrdersScreen({ onOpenOrder }: { onOpenOrder: (orderId: string) =
           const batch = ORDERS.slice(i, i + 10).map((o) => o.id);
           try {
             await flushAnalyticsBatch(batch, signal);
-          } catch {
-            if (!signal.aborted) throw new Error('flush failed');
+          } catch (error) {
+            if (!signal.aborted) throw error;
             break;
           }
         }

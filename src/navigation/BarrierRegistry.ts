@@ -13,6 +13,7 @@
  */
 
 import type { TimerHost } from '../core/types';
+import type { DiagnosticCode } from '../diagnostics/codes';
 import type { DiagnosticLevel } from '../diagnostics/types';
 
 /** Why a barrier is open. */
@@ -35,7 +36,7 @@ export interface TransitionBarrier {
 /** Diagnostic payload minus `timestamp` (the coordinator stamps it). */
 export interface BarrierDiagnostic {
   level: DiagnosticLevel;
-  code: string;
+  code: DiagnosticCode;
   message: string;
   routeKey?: string;
   details?: Record<string, unknown>;

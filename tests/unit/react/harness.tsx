@@ -1,19 +1,20 @@
 /**
  * Shared test harness for the react layer:
  *  - provider wrappers for render/renderHook
- *  - pump(): flush fake schedulers + pending macrotasks inside act()
+ *  - pump(): let pending macrotasks settle inside act()
+ *  - useBlockedGate(): hold every scope ineligible until released
  *  - NavigationTreeState fixture builders
  *
- * Requires the contract module mocks from ./fakes to be registered by the
- * importing test file (jest.mock calls must live in the test file itself).
+ * Tests run against the real TaskScheduler + NavigationCoordinator that
+ * <SmoothTaskProvider> creates.
  */
 
-import React, { type ReactNode } from 'react';
+import React, { useState, type ReactNode } from 'react';
 import { act } from '@testing-library/react-native';
 import type { NavigationRouteState, NavigationTreeState } from '../../../src/navigation/types';
+import { useSmoothTask } from '../../../src/react/SmoothTaskContext';
 import { SmoothTaskProvider } from '../../../src/react/SmoothTaskProvider';
 import type { SmoothTaskProviderProps } from '../../../src/react/types';
-import { flushAllSchedulers } from './fakes';
 
 export function createWrapper(providerProps?: SmoothTaskProviderProps) {
   return function Wrapper({ children }: { children?: ReactNode }) {
@@ -24,16 +25,39 @@ export function createWrapper(providerProps?: SmoothTaskProviderProps) {
 export const wrapper = createWrapper();
 
 /**
- * Advance the world: run every pending eligible fake-scheduler task and let
- * pending macrotasks (fake idle host, real implementations) settle.
+ * Advance the world: let pending macrotasks (drain continuations, idle
+ * callbacks) settle.
  */
 export async function pump(times = 1): Promise<void> {
   for (let i = 0; i < times; i++) {
-    await act(async () => {
-      flushAllSchedulers();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
   }
+}
+
+/**
+ * Hold every scope (app scope included) ineligible on the provider's
+ * coordinator, so scheduled tasks stay pending deterministically. Call it
+ * before the hooks under test in the same component: the gate is blocked
+ * during the first render, i.e. before any scheduling effect runs.
+ *
+ * Returns `release()`: restores the real gate and broadcasts so the
+ * scheduler revalidates its pending tasks.
+ */
+export function useBlockedGate(): () => Promise<void> {
+  const { coordinator } = useSmoothTask();
+  const [release] = useState(() => {
+    const isEligible = jest.spyOn(coordinator, 'isEligible').mockReturnValue(false);
+    return async () => {
+      isEligible.mockRestore();
+      // An AppState round-trip is a gate broadcast that leaves the app active
+      // (the jest AppState mock never reports a state, so it starts active).
+      await act(() => {
+        coordinator.setAppActive(false);
+        coordinator.setAppActive(true);
+      });
+    };
+  });
+  return release;
 }
 
 /** Shorthand: a plain route entry for a state fixture. */

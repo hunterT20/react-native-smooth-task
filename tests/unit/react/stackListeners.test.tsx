@@ -1,35 +1,45 @@
 /**
- * useSmoothStackListeners tests — registration lifecycle + event forwarding.
+ * Stack adapter tests — registration lifecycle + event forwarding, run
+ * against both adapters (they share src/navigation/listeners.ts and differ
+ * only in navigator `kind`). Native-stack emits the same five events
+ * (transitionStart/transitionEnd/gestureCancel/focus/blur); gestureCancel is
+ * iOS-only but maps to the same coordinator call.
  */
 
-jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () =>
-  jest.requireActual('./fakes').navigationTypesModule()
-);
-jest.mock('../../../src/diagnostics/types', () =>
-  jest.requireActual('./fakes').diagnosticsTypesModule()
-);
-
+import { useState } from 'react';
 import { act, renderHook } from '@testing-library/react-native';
 import { useSmoothStackListeners } from '../../../src/navigation/stack/useSmoothStackListeners';
+import { useSmoothNativeStackListeners } from '../../../src/navigation/native-stack/useSmoothNativeStackListeners';
 import { useSmoothTask } from '../../../src/react/SmoothTaskContext';
-import type { SmoothTaskContextValue } from '../../../src/react/types';
-import { FakeNavigationCoordinator } from './fakes';
+import type { NavigatorKind, NavigatorRegistration } from '../../../src/navigation/types';
+import type { SmoothStackListenersOptions, SmoothTaskContextValue } from '../../../src/react/types';
 import { pump, twoRouteState, wrapper } from './harness';
 
-describe('useSmoothStackListeners', () => {
-  function useBoth(id?: string): {
+describe.each<{
+  kind: NavigatorKind;
+  useListeners: (
+    options?: SmoothStackListenersOptions
+  ) =>
+    ReturnType<typeof useSmoothStackListeners> | ReturnType<typeof useSmoothNativeStackListeners>;
+}>([
+  { kind: 'stack', useListeners: useSmoothStackListeners },
+  { kind: 'native-stack', useListeners: useSmoothNativeStackListeners },
+])('$kind listeners', ({ kind, useListeners }) => {
+  function useBoth(options?: SmoothStackListenersOptions): {
     ctx: SmoothTaskContextValue;
-    listeners: ReturnType<typeof useSmoothStackListeners>;
+    registerNavigator: jest.SpyInstance<void, [NavigatorRegistration]>;
+    listeners: ReturnType<typeof useListeners>;
   } {
-    return {
-      ctx: useSmoothTask(),
-      listeners: useSmoothStackListeners(id === undefined ? undefined : { id }),
-    };
+    const ctx = useSmoothTask();
+    // Spy during the first render — before the registration effect runs.
+    const [registerNavigator] = useState(() => jest.spyOn(ctx.coordinator, 'registerNavigator'));
+    return { ctx, registerNavigator, listeners: useListeners(options) };
   }
 
+  const instanceIdPattern = (label: string) => new RegExp(`^${kind}:${label}:\\d+$`);
+
   it('registers the navigator on mount and unregisters on unmount', async () => {
-    const { result, unmount } = await renderHook(() => useBoth('root'), { wrapper });
+    const { result, unmount } = await renderHook(() => useBoth({ id: 'root' }), { wrapper });
     const coordinator = result.current.ctx.coordinator;
     expect(coordinator.navigatorCount).toBe(1);
     await unmount();
@@ -37,39 +47,31 @@ describe('useSmoothStackListeners', () => {
   });
 
   it('generates a unique labelled instanceId per hook instance', async () => {
-    const { result } = await renderHook(() => useBoth('root'), { wrapper });
-    const coordinator = result.current.ctx.coordinator;
-    if (coordinator instanceof FakeNavigationCoordinator) {
-      const [reg] = coordinator.registrations;
-      expect(reg?.kind).toBe('stack');
-      expect(reg?.label).toBe('root');
-      expect(reg?.instanceId).toMatch(/^stack:root:\d+$/);
-    }
-    const second = await renderHook(() => useBoth('root'), { wrapper });
-    const secondCoordinator = second.result.current.ctx.coordinator;
-    if (
-      coordinator instanceof FakeNavigationCoordinator &&
-      secondCoordinator instanceof FakeNavigationCoordinator
-    ) {
-      expect(secondCoordinator.registrations[0]?.instanceId).toMatch(/^stack:root:\d+$/);
-      expect(secondCoordinator.registrations[0]?.instanceId).not.toBe(
-        coordinator.registrations[0]?.instanceId
-      );
-    }
+    const first = await renderHook(() => useBoth({ id: 'root' }), { wrapper });
+    expect(first.result.current.registerNavigator).toHaveBeenCalledTimes(1);
+    const [reg] = first.result.current.registerNavigator.mock.calls[0]!;
+    expect(reg.kind).toBe(kind);
+    expect(reg.label).toBe('root');
+    expect(reg.instanceId).toMatch(instanceIdPattern('root'));
+
+    const second = await renderHook(() => useBoth({ id: 'root' }), { wrapper });
+    expect(second.result.current.registerNavigator).toHaveBeenCalledTimes(1);
+    const [secondReg] = second.result.current.registerNavigator.mock.calls[0]!;
+    expect(secondReg.instanceId).toMatch(instanceIdPattern('root'));
+    expect(secondReg.instanceId).not.toBe(reg.instanceId);
   });
 
   it('falls back to an anon label when no id is given', async () => {
     const { result } = await renderHook(() => useBoth(), { wrapper });
-    const coordinator = result.current.ctx.coordinator;
-    if (coordinator instanceof FakeNavigationCoordinator) {
-      const [reg] = coordinator.registrations;
-      expect(reg?.label).toBeUndefined();
-      expect(reg?.instanceId).toMatch(/^stack:anon:\d+$/);
-    }
+    expect(result.current.registerNavigator).toHaveBeenCalledTimes(1);
+    const [reg] = result.current.registerNavigator.mock.calls[0]!;
+    expect(reg.kind).toBe(kind);
+    expect(reg.label).toBeUndefined();
+    expect(reg.instanceId).toMatch(instanceIdPattern('anon'));
   });
 
   it('forwards transitionStart/transitionEnd/gestureCancel/focus/blur to the coordinator', async () => {
-    const { result } = await renderHook(() => useBoth('root'), { wrapper });
+    const { result } = await renderHook(() => useBoth({ id: 'root' }), { wrapper });
     const coordinator = result.current.ctx.coordinator;
     const spies = {
       started: jest.spyOn(coordinator, 'transitionStarted'),
@@ -110,6 +112,7 @@ describe('useSmoothStackListeners', () => {
     const coordinator = result.current.ctx.coordinator;
     const started = jest.spyOn(coordinator, 'transitionStarted');
     const focused = jest.spyOn(coordinator, 'routeFocused');
+    const blurred = jest.spyOn(coordinator, 'routeBlurred');
     const l = result.current.listeners as unknown as Record<
       string,
       ((e?: unknown) => void) | undefined
@@ -123,23 +126,18 @@ describe('useSmoothStackListeners', () => {
     });
     expect(started).not.toHaveBeenCalled();
     expect(focused).not.toHaveBeenCalled();
+    expect(blurred).not.toHaveBeenCalled();
   });
 
   it('returns a referentially stable listeners object', async () => {
-    const { result, rerender } = await renderHook(() => useBoth('x'), { wrapper });
+    const { result, rerender } = await renderHook(() => useBoth({ id: 'x' }), { wrapper });
     const first = result.current.listeners;
     await rerender({});
     expect(result.current.listeners).toBe(first);
   });
 
   it('animationEnabled:false ignores all transition events — no barrier ever opens', async () => {
-    const { result } = await renderHook(
-      () => ({
-        ctx: useSmoothTask(),
-        listeners: useSmoothStackListeners({ animationEnabled: false }),
-      }),
-      { wrapper }
-    );
+    const { result } = await renderHook(() => useBoth({ animationEnabled: false }), { wrapper });
     const coordinator = result.current.ctx.coordinator;
     await act(() => coordinator.setNavigationState(twoRouteState(0)));
     const l = result.current.listeners;
@@ -165,5 +163,22 @@ describe('useSmoothStackListeners', () => {
     await act(() => result.current.listeners.transitionEnd({ target: 'route-a' }));
     await pump();
     expect(coordinator.getRouteStatus('route-a').settled).toBe(true);
+  });
+});
+
+describe('native-stack listeners', () => {
+  it('ignores the { closing } data payload on transitionStart/transitionEnd', async () => {
+    const { result } = await renderHook(
+      () => ({ ctx: useSmoothTask(), listeners: useSmoothNativeStackListeners({ id: 'root' }) }),
+      { wrapper }
+    );
+    const coordinator = result.current.ctx.coordinator;
+    const started = jest.spyOn(coordinator, 'transitionStarted');
+    const finished = jest.spyOn(coordinator, 'transitionFinished');
+    const l = result.current.listeners;
+    await act(() => l.transitionStart({ target: 'route-a', data: { closing: true } }));
+    await act(() => l.transitionEnd({ target: 'route-a', data: { closing: true } }));
+    expect(started).toHaveBeenCalledWith('route-a');
+    expect(finished).toHaveBeenCalledWith('route-a');
   });
 });
