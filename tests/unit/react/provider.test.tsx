@@ -2,14 +2,6 @@
  * SmoothTaskProvider + SmoothTaskContext tests.
  */
 
-jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () =>
-  jest.requireActual('./fakes').navigationTypesModule()
-);
-jest.mock('../../../src/diagnostics/types', () =>
-  jest.requireActual('./fakes').diagnosticsTypesModule()
-);
-
 import React, { type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { act, renderHook } from '@testing-library/react-native';

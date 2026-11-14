@@ -2,20 +2,13 @@
  * Route-scoped hooks (src/react/routeScoped/*): same APIs bound to
  * `route:<useRoute().key>` — gated by the route's settled status.
  *
- * Determinism note: these tests run against the real TaskScheduler when it
- * exists. A real impl starts eligible tasks on the next macrotask, which may
- * be inside the same awaited act(). To keep tasks *pending* under any impl,
+ * Determinism note: these tests run against the real TaskScheduler, which
+ * starts eligible tasks on schedule/gate broadcast or the next macrotask —
+ * possibly inside the same awaited act(). To keep tasks *pending*,
  * barriers are opened before (or atomically with) the state feed that would
  * make the route eligible — the task is never eligible at any timer tick.
  */
 
-jest.mock('../../../src/core/types', () => jest.requireActual('./fakes').coreTypesModule());
-jest.mock('../../../src/navigation/types', () =>
-  jest.requireActual('./fakes').navigationTypesModule()
-);
-jest.mock('../../../src/diagnostics/types', () =>
-  jest.requireActual('./fakes').diagnosticsTypesModule()
-);
 jest.mock('@react-navigation/native', () => ({
   useRoute: jest.fn(),
 }));
