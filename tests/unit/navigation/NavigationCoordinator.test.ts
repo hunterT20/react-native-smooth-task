@@ -659,6 +659,45 @@ describe('settling — the state→event ordering gap', () => {
     expect(coordinator.isEligible('route:home-post')).toBe(true);
   });
 
+  it('a focus hint does not downgrade a non-animated navNode to observed', () => {
+    const { coordinator, timers } = setup();
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    coordinator.routeFocused('home-post');
+    coordinator.setNavigationState(appTree({ homeIndex: 0 }));
+    timers.advance(300); // elapsed → classified non-animated
+
+    coordinator.routeFocused('home-feed');
+    coordinator.setNavigationState(appTree({ homeIndex: 1 }));
+    expect(coordinator.isEligible('route:home-post')).toBe(true);
+    expect(timers.pendingCount).toBe(0);
+  });
+
+  it('purging a navNode resets its settling classification', () => {
+    const { coordinator } = setup();
+    coordinator.setNavigationState(appTree({ tabIndex: 1, ordersIndex: 1 }));
+    coordinator.transitionStarted('orders-detail');
+    coordinator.transitionFinished('orders-detail'); // 'tab-orders' is animated
+
+    // Reset removes the Orders tab — navNode 'tab-orders' is purged.
+    coordinator.setNavigationState(
+      nav(
+        [
+          route(
+            'tabs',
+            'MainTabs',
+            nav([route('tab-home', 'Home', nav([route('home-feed', 'Feed')], 0))], 0)
+          ),
+        ],
+        0
+      )
+    );
+
+    // Recreated with no lifecycle events: back to focus-only gating.
+    coordinator.setNavigationState(appTree({ tabIndex: 1, ordersIndex: 1 }));
+    coordinator.setNavigationState(appTree({ tabIndex: 1, ordersIndex: 0 }));
+    expect(coordinator.isEligible('route:orders-list')).toBe(true);
+  });
+
   it('skips marking while a barrier already covers the navNode', () => {
     const { coordinator } = setup();
     coordinator.setNavigationState(appTree({ homeIndex: 1 }));
