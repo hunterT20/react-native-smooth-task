@@ -36,10 +36,9 @@ tests/
 │       ├── rootHooks.test.tsx            # app-scope hooks (Invariant B, sticky latch)
 │       ├── routeScoped.test.tsx          # route-scope hooks through a mocked useRoute
 │       ├── useSmoothNavigationContainer.test.tsx
-│       ├── useSmoothStackListeners.test.tsx
+│       ├── stackListeners.test.tsx       # stack + native-stack adapters (describe.each)
 │       ├── rntl-smoke.test.tsx
-│       ├── fakes.ts                      # fake scheduler/coordinator contract mocks
-│       └── harness.tsx                   # wrappers + pump() + state fixtures
+│       └── harness.tsx                   # wrappers + pump() + useBlockedGate() + fixtures
 └── integration/
     ├── navigation-flows.test.ts          # REAL coordinator + REAL scheduler,
     │                                     #   driven by hand-built state trees
