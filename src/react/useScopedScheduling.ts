@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { safeInvoke } from '../core/safeInvoke';
 import { routeKeyFromScope, type ScopeId, type TaskHandle } from '../core/types';
 import type {
   AfterTransitionOptions,
@@ -96,13 +97,8 @@ export function useScopedAfterTransition(
         // cancelled so the callback can only ever run once per focus epoch
         key: dedupeKey,
         scheduling: optionsRef.current?.scheduling ?? 'transition',
-        onError: (error) => {
-          try {
-            optionsRef.current?.onError?.(error);
-          } catch {
-            // onError must never break anything
-          }
-        },
+        // The scheduler already isolates throws from onError.
+        onError: (error) => optionsRef.current?.onError?.(error),
       });
     };
 
@@ -156,13 +152,7 @@ export function useScopedIdleTask(
     const handles = handlesRef.current;
     const pendingByKey = pendingByKeyRef.current;
     return () => {
-      for (const handle of [...handles]) {
-        try {
-          handle.cancel();
-        } catch {
-          // cancellation must never break unmount
-        }
-      }
+      for (const handle of [...handles]) safeInvoke(() => handle.cancel());
       handles.clear();
       pendingByKey.clear();
     };

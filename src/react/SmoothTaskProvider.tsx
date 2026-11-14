@@ -19,6 +19,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { AppState } from 'react-native';
 import { createTaskScheduler } from '../core/TaskScheduler';
 import { createDefaultIdleHost } from '../core/IdleHost';
+import { safeInvoke } from '../core/safeInvoke';
 import type { DiagnosticsSink } from '../diagnostics/types';
 import { createConsoleDiagnosticsSink, NOOP_DIAGNOSTICS } from '../diagnostics/Diagnostics';
 import type { Diagnostics, DiagnosticListener } from '../diagnostics/types';
@@ -40,18 +41,8 @@ function createDiagnosticsChannel(sink: DiagnosticsSink): Diagnostics {
   const listeners = new Set<DiagnosticListener>();
   return {
     emit(event) {
-      try {
-        sink.emit(event);
-      } catch {
-        // a broken sink must never take the app down
-      }
-      for (const listener of [...listeners]) {
-        try {
-          listener(event);
-        } catch {
-          // same for subscribers
-        }
-      }
+      safeInvoke(() => sink.emit(event));
+      for (const listener of [...listeners]) safeInvoke(listener, event);
     },
     subscribe(listener) {
       listeners.add(listener);
