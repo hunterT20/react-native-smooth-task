@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { isThenable, scopedDedupeKey } from '../core/dedupe';
 import { routeKeyFromScope, type ScopeId, type TaskHandle } from '../core/types';
 import type {
   AfterTransitionOptions,
@@ -171,28 +172,28 @@ export function useScopedIdleTask(
   return useCallback(
     (callback: TaskCallback, options?: IdleTaskOptions): TaskHandle => {
       const key = options?.key;
-      // Same scope+key pairing the scheduler's dedupe index uses.
-      const dedupeKey = key !== undefined ? JSON.stringify([scopeId, key]) : undefined;
+      const dedupeKey = key !== undefined ? scopedDedupeKey(scopeId, key) : undefined;
       if (dedupeKey !== undefined) pendingByKeyRef.current.get(dedupeKey)?.cancel();
       // Settled tasks (completed/failed/cancelled) must not linger in the
       // tracked set — on a long-lived screen it would grow with every task
       // ever scheduled. `finished` also guards the sync-settle case where
       // the callback ran before the handle could be tracked.
       let finished = false;
+      const releasePendingKey = (): void => {
+        if (dedupeKey !== undefined && pendingByKeyRef.current.get(dedupeKey) === tracked) {
+          pendingByKeyRef.current.delete(dedupeKey);
+        }
+      };
       const tracked: TaskHandle = {
         cancel: () => {
           inner.cancel();
-          if (dedupeKey !== undefined && pendingByKeyRef.current.get(dedupeKey) === tracked) {
-            pendingByKeyRef.current.delete(dedupeKey);
-          }
+          releasePendingKey();
           handlesRef.current.delete(tracked);
         },
       };
       const finish = (): void => {
         finished = true;
-        if (dedupeKey !== undefined && pendingByKeyRef.current.get(dedupeKey) === tracked) {
-          pendingByKeyRef.current.delete(dedupeKey);
-        }
+        releasePendingKey();
         handlesRef.current.delete(tracked);
       };
       const inner = scheduler.schedule(
@@ -200,9 +201,7 @@ export function useScopedIdleTask(
         (signal) => {
           // Running tasks are never deduped (scheduler semantics) — the
           // mirror index only tracks pending tasks.
-          if (dedupeKey !== undefined && pendingByKeyRef.current.get(dedupeKey) === tracked) {
-            pendingByKeyRef.current.delete(dedupeKey);
-          }
+          releasePendingKey();
           // Scheduler-side cancels (dedupe, scope release, dispose) abort
           // the signal without the callback settling — untrack those too.
           signal.addEventListener('abort', finish, { once: true });
@@ -213,7 +212,7 @@ export function useScopedIdleTask(
             finish();
             throw error;
           }
-          if (result != null && typeof result.then === 'function') {
+          if (isThenable(result)) {
             result.then(finish, finish);
           } else {
             finish();
