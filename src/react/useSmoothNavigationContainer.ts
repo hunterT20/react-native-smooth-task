@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import type { DiagnosticCode } from '../diagnostics/codes';
 import type { NavigationTreeState } from '../navigation/types';
 import { useSmoothTask } from './SmoothTaskContext';
 import type { NavigationContainerObservers, UseSmoothNavigationContainerOptions } from './types';
@@ -64,7 +65,7 @@ export function useSmoothNavigationContainer(
       warnedMissingRef.current = true;
       diagnostics.emit({
         level: 'warn',
-        code: 'missing-nav-ref',
+        code: 'missing-nav-ref' satisfies DiagnosticCode,
         message: MISSING_NAV_REF_MESSAGE,
         timestamp: Date.now(),
       });

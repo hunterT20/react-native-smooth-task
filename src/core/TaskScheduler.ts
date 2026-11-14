@@ -33,6 +33,7 @@ import type {
   TaskStatus,
   TimerHost,
 } from './types';
+import type { DiagnosticCode } from '../diagnostics/codes';
 import { createDefaultTimerHost } from './Hosts';
 import { isThenable, scopedDedupeKey } from './dedupe';
 
@@ -76,7 +77,7 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
   // Idle state: at most one outstanding idle request, or null.
   let idleHandle: number | null = null;
 
-  function emitTaskEvent(code: string, task: ScheduledTask, error?: unknown): void {
+  function emitTaskEvent(code: DiagnosticCode, task: ScheduledTask, error?: unknown): void {
     if (!diagnostics) return;
     const details: Record<string, unknown> = {
       taskId: task.id,

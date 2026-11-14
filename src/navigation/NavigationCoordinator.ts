@@ -35,6 +35,7 @@ import {
   type ScopeId,
   type TimerHost,
 } from '../core/types';
+import type { DiagnosticCode } from '../diagnostics/codes';
 import type { DiagnosticLevel, DiagnosticsSink } from '../diagnostics/types';
 import { BarrierRegistry } from './BarrierRegistry';
 import { RouteRegistry } from './RouteRegistry';
@@ -119,7 +120,7 @@ export function createNavigationCoordinator(
 
   const emit = (
     level: DiagnosticLevel,
-    code: string,
+    code: DiagnosticCode,
     message: string,
     extra?: { routeKey?: string; scopeId?: string; details?: Record<string, unknown> }
   ): void => {
