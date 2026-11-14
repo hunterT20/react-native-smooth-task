@@ -28,6 +28,7 @@
  */
 
 import { createDefaultTimerHost } from '../core/Hosts';
+import { safeInvoke } from '../core/safeInvoke';
 import {
   APP_SCOPE_ID,
   routeKeyFromScope,
@@ -124,11 +125,9 @@ export function createNavigationCoordinator(
     message: string,
     extra?: { routeKey?: string; scopeId?: string; details?: Record<string, unknown> }
   ): void => {
-    try {
-      sink.emit({ level, code, message, timestamp: timers.now(), ...(extra ?? {}) });
-    } catch {
-      // A misbehaving sink must never break the coordinator.
-    }
+    safeInvoke(() =>
+      sink.emit({ level, code, message, timestamp: timers.now(), ...(extra ?? {}) })
+    );
   };
 
   const registry = new RouteRegistry();
@@ -168,13 +167,7 @@ export function createNavigationCoordinator(
   let missingAdapterWarned = false;
 
   function notify(): void {
-    for (const listener of [...listeners]) {
-      try {
-        listener();
-      } catch {
-        // A listener must never break the coordinator.
-      }
-    }
+    for (const listener of [...listeners]) safeInvoke(listener);
   }
 
   /**

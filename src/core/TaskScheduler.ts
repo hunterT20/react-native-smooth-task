@@ -36,6 +36,7 @@ import type {
 import type { DiagnosticCode } from '../diagnostics/codes';
 import { createDefaultTimerHost } from './Hosts';
 import { isThenable, scopedDedupeKey } from './dedupe';
+import { safeInvoke } from './safeInvoke';
 
 const DEFAULT_MAX_TASKS_PER_TURN = 8;
 
@@ -86,7 +87,7 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
       scheduling: task.scheduling,
     };
     if (code === 'task-failed') details.error = error;
-    try {
+    safeInvoke(() =>
       diagnostics.emit({
         level: code === 'task-failed' ? 'error' : 'debug',
         code,
@@ -94,10 +95,8 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
         scopeId: task.scopeId,
         details,
         timestamp: timerHost.now(),
-      });
-    } catch {
-      // A misbehaving sink must never break the queue.
-    }
+      })
+    );
   }
 
   function forgetPendingKey(task: ScheduledTask): void {
@@ -157,13 +156,7 @@ export function createTaskScheduler(deps: TaskSchedulerDeps): TaskScheduler {
     task.status = 'failed';
     liveTasks.delete(task.id);
     emitTaskEvent('task-failed', task, error);
-    if (task.onError) {
-      try {
-        task.onError(error);
-      } catch {
-        // onError must never break the queue.
-      }
-    }
+    safeInvoke(() => task.onError?.(error));
   }
 
   /**
